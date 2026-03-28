@@ -1,0 +1,6 @@
+node_modules/
+dist/
+mosaic-card.js
+mosaic-card.js.map
+*.tsbuildinfo
+.DS_Store
