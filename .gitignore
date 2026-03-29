@@ -4,3 +4,28 @@ mosaic-card.js
 mosaic-card.js.map
 *.tsbuildinfo
 .DS_Store
+
+# Playwright
+test/.auth/
+test/results/
+test/screenshots/*.png
+playwright-report/
+
+# HA runtime-generated files (written by container during operation — not fixtures)
+test/fixtures/ha-config/home-assistant.log*
+test/fixtures/ha-config/known_devices.yaml
+test/fixtures/ha-config/blueprints/
+test/fixtures/ha-config/deps/
+test/fixtures/ha-config/tts/
+test/fixtures/ha-config/.storage/core.config_entries
+test/fixtures/ha-config/.storage/core.device_registry
+test/fixtures/ha-config/.storage/core.entity_registry
+test/fixtures/ha-config/.storage/core.restore_state
+test/fixtures/ha-config/.storage/frontend.system_data
+test/fixtures/ha-config/.storage/homeassistant.exposed_entities
+test/fixtures/ha-config/.storage/http
+test/fixtures/ha-config/.storage/http.auth
+test/fixtures/ha-config/.storage/lovelace.lovelace
+test/fixtures/ha-config/.storage/lovelace.mosaic_test
+test/fixtures/ha-config/.storage/lovelace_dashboards
+test/fixtures/ha-config/.storage/trace.saved_traces
