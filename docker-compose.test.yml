@@ -1,0 +1,16 @@
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: ha-mosaic-test
+    # host networking required on servers with restricted sysctl (e.g. Proxmox LXC)
+    # HA is configured to listen on port 18123 via http.server_port in configuration.yaml
+    network_mode: host
+    volumes:
+      - ./test/fixtures/ha-config:/config
+    environment:
+      - TZ=Europe/Vienna
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18123"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
