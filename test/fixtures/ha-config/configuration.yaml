@@ -1,0 +1,10 @@
+homeassistant:
+  name: Mosaic Test
+  unit_system: metric
+
+demo:
+
+http:
+  server_port: 18123
+  cors_allowed_origins:
+    - "*"
