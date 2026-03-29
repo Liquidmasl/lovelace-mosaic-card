@@ -104,11 +104,30 @@ win.customCards.push({ type: "mosaic-card", name: "Mosaic Card", description: ".
 
 ---
 
-## What to Update Here (Rule)
+## Deep-Dive Files (`.claude/` directory)
 
-Every issue that produces non-obvious knowledge must add a section or bullet here before closing.
-If you learned something about HA shadow DOM, test infra, selectors, or new code patterns — it goes in this file.
+When a topic needs more detail than a few bullets, create a dedicated file under `.claude/`. These files are **not auto-loaded** — they exist to avoid bloating this file. A future session reads CLAUDE.md first, then loads only the deep-dive file(s) it actually needs.
+
+**Index of deep-dive files** (load on demand):
+
+<!-- Add entries here as deep-dive files are created, e.g.:
+- [`.claude/ha-dom-reference.md`](.claude/ha-dom-reference.md) — HA shadow DOM structure, querySelector gotchas, slot patterns
+- [`.claude/test-infrastructure.md`](.claude/test-infrastructure.md) — test setup, Playwright helpers, selector patterns
+-->
+
+*(No deep-dive files yet — add them here as they are created)*
 
 ---
 
-*Last updated: LQM-62 (initial knowledge base bootstrap)*
+## What to Update Here (Rule)
+
+Every issue that produces non-obvious knowledge must add a section or bullet here before closing:
+- **Operational facts** (file paths, commands, API patterns that took trial-and-error) → add inline here
+- **Topics needing >5 bullets** → create `.claude/<topic>.md` and add it to the index above
+- If you learned something about HA shadow DOM, test infra, selectors, or new code patterns — it goes in this file or a deep-dive file indexed above
+
+Goal: a cold-start session reads this file (~150 lines), knows where everything is, and only loads deep-dive files it actually needs.
+
+---
+
+*Last updated: LQM-62 (token-cost-reduction structure)*
