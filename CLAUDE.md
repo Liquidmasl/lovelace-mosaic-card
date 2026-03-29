@@ -1,6 +1,8 @@
 # CLAUDE.md — Mosaic Card Knowledge Base
 
 > Reference index for AI sessions. Ctrl+F friendly. Update when you learn something non-obvious.
+>
+> **Purpose:** Reduce token expenditure on every future session. Facts recorded here prevent Claude from re-discovering them through trial-and-error tool calls. If you believe a piece of information will help achieve that goal — whether it belongs in this file or in a branching `.claude/<topic>.md` deep-dive — add it.
 
 ---
 
