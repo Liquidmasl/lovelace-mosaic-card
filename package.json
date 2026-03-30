@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "description": "A mosaic layout card for Home Assistant Lovelace",
   "type": "module",
-  "main": "mosaic-card.js",
+  "main": "dist/mosaic-card.js",
   "scripts": {
     "build": "rollup -c && node scripts/version.js",
     "watch": "rollup -c --watch",

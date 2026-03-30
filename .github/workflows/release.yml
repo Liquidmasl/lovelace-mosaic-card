@@ -1,26 +1,56 @@
 name: Release
 
 on:
-  release:
-    types: [published]
+  pull_request:
+    types: [closed]
+    branches: [main]
 
 jobs:
-  build:
+  release:
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
 
-      - run: npm ci
-      - run: npm run build
+      - name: Install & Build
+        run: |
+          npm ci
+          npm run build
 
-      - name: Upload release asset
+      - name: Extract version
+        id: version
+        run: echo "version=v$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          NOTES=$(sed -n "/^## \[${VERSION}\]/,/^## \[/p" CHANGELOG.md | head -n -1 | tail -n +2)
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create tag
+        run: |
+          git tag ${{ steps.version.outputs.version }}
+          git push origin ${{ steps.version.outputs.version }}
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: mosaic-card.js
+          tag_name: ${{ steps.version.outputs.version }}
+          body: ${{ steps.changelog.outputs.notes }}
+          files: dist/mosaic-card.js
+
+      - name: HACS Validation
+        uses: hacs/action@22.5.0
+        with:
+          category: plugin
