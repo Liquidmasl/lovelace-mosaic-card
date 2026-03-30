@@ -52,6 +52,15 @@ interface MosaicCardConfig {
   column_gap?: number;
   /** Gap between rows in px. Default 8. */
   row_gap?: number;
+  /**
+   * Auto-flow mode. Only applies when mode = "auto".
+   * Controls CSS grid-auto-flow. Default "dense".
+   */
+  auto_flow?: "dense" | "row" | "column";
+  /** Title displayed above the grid. */
+  title?: string;
+  /** Strip card borders from sub-cards. Default true. */
+  strip_borders?: boolean;
   cards?: SubCardConfig[];
 }
 
@@ -109,6 +118,13 @@ export class MosaicCard extends LitElement {
         display: grid;
       }
 
+      .mosaic-title {
+        font-size: var(--ha-card-header-font-size, 1.24rem);
+        font-weight: 500;
+        padding: 8px 16px 4px;
+        color: var(--primary-text-color);
+      }
+
       /*
        * Each direct child of the grid acts as a card wrapper.
        * min-width / min-height prevent grid blowout when card content is wide.
@@ -117,6 +133,15 @@ export class MosaicCard extends LitElement {
         min-width: 0;
         min-height: 0;
         position: relative;
+      }
+
+      /*
+       * strip-borders: remove ha-card box-shadow and border-radius from sub-cards.
+       */
+      .mosaic-grid.strip-borders > .card-wrapper ::slotted(ha-card),
+      .mosaic-grid.strip-borders > .card-wrapper ha-card {
+        box-shadow: none !important;
+        border-radius: 0 !important;
       }
     `;
   }
@@ -219,7 +244,8 @@ export class MosaicCard extends LitElement {
     ];
 
     if (mode === "auto") {
-      parts.push("grid-auto-flow: dense");
+      const autoFlow = cfg.auto_flow ?? "dense";
+      parts.push(`grid-auto-flow: ${autoFlow}`);
     }
 
     return parts.join("; ");
@@ -267,9 +293,15 @@ export class MosaicCard extends LitElement {
     }
 
     const mode = this._config.mode ?? "auto";
+    const title = this._config.title;
+    const stripBorders = this._config.strip_borders !== false;
 
     return html`
-      <div class="mosaic-grid" style=${this._containerStyle()}>
+      ${title ? html`<div class="mosaic-title">${title}</div>` : ""}
+      <div
+        class="mosaic-grid ${stripBorders ? "strip-borders" : ""}"
+        style=${this._containerStyle()}
+      >
         ${this._cardElements.map((el, i) => {
           const cardConfig = this._config!.cards![i];
           const opts = this._resolveGridOptions(cardConfig, el);
@@ -309,6 +341,11 @@ export class MosaicCard extends LitElement {
     };
   }
 
+  static async getConfigElement(): Promise<HTMLElement> {
+    await import("./mosaic-card-editor");
+    return document.createElement("mosaic-card-editor");
+  }
+
   static getStubConfig(): MosaicCardConfig {
     return {
       type: "custom:mosaic-card",
@@ -316,6 +353,7 @@ export class MosaicCard extends LitElement {
       columns: 4,
       column_gap: 8,
       row_gap: 8,
+      strip_borders: true,
       cards: [],
     };
   }
