@@ -17,9 +17,9 @@ const root = resolve(__dirname, "..");
 const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf-8"));
 const version = pkg.version;
 
-const outFile = resolve(root, "mosaic-card.js");
+const outFile = resolve(root, "dist", "mosaic-card.js");
 let content = readFileSync(outFile, "utf-8");
 content = content.replaceAll("__VERSION__", version);
 writeFileSync(outFile, content, "utf-8");
 
-console.log(`Stamped version ${version} into mosaic-card.js`);
+console.log(`Stamped version ${version} into dist/mosaic-card.js`);

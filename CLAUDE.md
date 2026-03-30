@@ -11,7 +11,7 @@
 `lovelace-mosaic-card` is a custom Home Assistant Lovelace card that provides a mosaic layout for sub-cards. It is distributed as a single bundled JS file and installed via HACS or manually.
 
 **Repo:** https://github.com/Liquidmasl/lovelace-mosaic-card
-**Output artifact:** `mosaic-card.js` (single ES module, no dependencies at runtime)
+**Output artifact:** `dist/mosaic-card.js` (single ES module, no dependencies at runtime; `dist/` is gitignored — built in CI)
 
 ---
 
@@ -21,10 +21,14 @@
 src/
   mosaic-card.ts             # Main card — single source file
 scripts/
-  version.js                 # Post-build script: stamps __VERSION__ into mosaic-card.js
-.github/workflows/
-  release.yml                # CI: builds on GitHub release publish, uploads mosaic-card.js as asset
-rollup.config.mjs            # Build config: input src/mosaic-card.ts → output mosaic-card.js
+  version.js                 # Post-build script: stamps __VERSION__ into dist/mosaic-card.js
+  release.sh                 # Run to create a release PR: ./scripts/release.sh <patch|minor|major>
+.github/
+  workflows/
+    release.yml              # CI: triggers on release/* PR merge → tag + build + GitHub release + HACS validate
+    validate.yml             # CI: runs on push/PR → build + HACS validation
+  pull_request_template.md   # PR template with Release Notes section for changelog generation
+rollup.config.mjs            # Build config: input src/mosaic-card.ts → output dist/mosaic-card.js
 tsconfig.json                # TypeScript strict config, ES2021 target
 package.json                 # npm scripts, devDeps (rollup, typescript, lit, playwright)
 hacs.json                    # HACS metadata: filename=mosaic-card.js, render_readme=true
@@ -53,10 +57,10 @@ npm run build          # tsc + rollup → mosaic-card.js (minified, version stam
 npm run watch          # rollup --watch (no minification in watch mode)
 ```
 
-- Build output: `mosaic-card.js` in repo root (ES module, minified by terser in prod)
+- Build output: `dist/mosaic-card.js` (ES module, minified by terser in prod); `dist/` is gitignored
 - Version token `__VERSION__` in source is replaced by `scripts/version.js` using `package.json` version
 - Watch mode skips terser (`dev` flag in rollup.config.mjs: `!dev && terser(...)`)
-- **To test in HA:** copy `mosaic-card.js` to HA `www/` folder, add as Lovelace resource, hard-refresh browser
+- **To test in HA:** copy `dist/mosaic-card.js` to HA `www/` folder, add as Lovelace resource, hard-refresh browser
 
 ---
 
@@ -93,10 +97,32 @@ win.customCards.push({ type: "mosaic-card", name: "Mosaic Card", description: ".
 
 ## Release Process
 
-1. GitHub release published → triggers `release.yml`
-2. CI runs `npm ci && npm run build`
-3. `mosaic-card.js` uploaded as release asset
-4. HACS picks up the asset via `hacs.json` (`filename: "mosaic-card.js"`)
+### How to trigger a release
+Tell Cyrus: "release a patch/minor/major". Cyrus runs:
+```bash
+git checkout main && git pull
+./scripts/release.sh minor   # or patch / major
+```
+This creates a `release/vX.Y.Z` branch, bumps `package.json`, assembles `CHANGELOG.md` from merged PR bodies, and opens a PR.
+
+### PR body convention
+Every PR with user-facing changes should include a `## Release Notes` section:
+```markdown
+## Release Notes
+- Added auto mode with CSS Grid dense packing
+```
+PRs without this section (CI changes, refactors) are silently skipped in the changelog.
+
+### Release flow (automated)
+1. Cyrus creates release PR via `scripts/release.sh`
+2. Marcel reviews and merges
+3. `release.yml` detects merge of `release/*` branch → builds, creates tag, publishes GitHub release, runs HACS validation
+4. HACS picks up `mosaic-card.js` asset (uploaded from `dist/mosaic-card.js`, named by base filename)
+
+### HACS notes
+- `hacs.json` `filename` refers to the release asset name, not a path — `dist/mosaic-card.js` uploads as `mosaic-card.js` ✓
+- Do NOT mark releases as prerelease — HACS excludes prereleases by default
+- `validate.yml` builds the card first so `hacs/action` can find `dist/mosaic-card.js` even though `dist/` is gitignored
 
 ---
 
@@ -115,7 +141,7 @@ win.customCards.push({ type: "mosaic-card", name: "Mosaic Card", description: ".
 ### Debug a build issue
 - Run `npm run build` and check rollup/tsc errors
 - TypeScript errors show file:line; fix them — strict mode means no implicit any
-- If `mosaic-card.js` missing version: check `scripts/version.js` ran (it's part of `npm run build`)
+- If `dist/mosaic-card.js` missing version: check `scripts/version.js` ran (it's part of `npm run build`)
 
 ---
 
@@ -172,4 +198,4 @@ Goal: a cold-start session reads this file (~150 lines), knows where everything 
 
 ---
 
-*Last updated: LQM-61 (test infrastructure, HA DOM structure, Playwright patterns)*
+*Last updated: LQM-65 + LQM-64 (dist/ output, validate workflow, PR-based release workflow)*
