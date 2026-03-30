@@ -161,6 +161,23 @@ When a topic needs more detail than a few bullets, create a dedicated file under
 
 ---
 
+## UI Feature Development Rule
+
+Every new UI feature (visual editors, dialogs, custom elements) **must** include:
+1. **Playwright e2e tests** — cover: element renders, key fields/sections visible, interactive behaviors (toggles, conditionals)
+2. **Screenshots** — taken by the tests themselves (`test/screenshots/<feature>-*.png`), then posted to the **PR description** and the **Linear issue** as attachments
+3. Copy updated `mosaic-card.js` to the container before running tests: `docker cp mosaic-card.js ha-mosaic-test:/config/www/mosaic-card.js`
+
+**Test shadow DOM path for mosaic-card-editor:**
+```
+home-assistant.shadowRoot
+  > hui-dialog-edit-card.shadowRoot
+    > hui-card-element-editor.shadowRoot
+      > mosaic-card-editor.shadowRoot   ← editor content here
+```
+
+---
+
 ## What to Update Here (Rule)
 
 Every issue that produces non-obvious knowledge must add a section or bullet here before closing:
