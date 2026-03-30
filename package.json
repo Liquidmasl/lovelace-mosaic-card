@@ -1,6 +1,6 @@
 {
   "name": "lovelace-mosaic-card",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "A mosaic layout card for Home Assistant Lovelace",
   "type": "module",
   "main": "mosaic-card.js",
