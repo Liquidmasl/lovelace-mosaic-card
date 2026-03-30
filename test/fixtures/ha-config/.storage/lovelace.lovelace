@@ -1,0 +1,320 @@
+{
+  "version": 1,
+  "minor_version": 1,
+  "key": "lovelace.lovelace",
+  "data": {
+    "config": {
+      "title": "Mosaic Card Demo",
+      "views": [
+        {
+          "title": "Auto Mode",
+          "path": "home",
+          "icon": "mdi:view-grid",
+          "badges": [],
+          "cards": [
+            {
+              "type": "custom:mosaic-card",
+              "title": "Auto Mode — Dense Grid (4 columns)",
+              "mode": "auto",
+              "columns": 4,
+              "column_gap": 8,
+              "row_gap": 8,
+              "cards": [
+                {
+                  "type": "markdown",
+                  "content": "## 📐 Full Width\nSpans all 4 columns",
+                  "grid_options": {
+                    "columns": 4,
+                    "rows": 1
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "## Wide\n2 of 4 columns",
+                  "grid_options": {
+                    "columns": 2,
+                    "rows": 1
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "### Narrow\n1 col",
+                  "grid_options": {
+                    "columns": 1,
+                    "rows": 1
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "### Narrow\n1 col",
+                  "grid_options": {
+                    "columns": 1,
+                    "rows": 1
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "### 1 col\nTall: 2 rows",
+                  "grid_options": {
+                    "columns": 1,
+                    "rows": 2
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "### 3 cols\nDense auto-flow places this next to the tall card above",
+                  "grid_options": {
+                    "columns": 3,
+                    "rows": 1
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "### 3 cols\nFills the remaining space beside tall card",
+                  "grid_options": {
+                    "columns": 3,
+                    "rows": 1
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Manual Mode",
+          "path": "manual",
+          "icon": "mdi:cursor-move",
+          "badges": [],
+          "cards": [
+            {
+              "type": "custom:mosaic-card",
+              "title": "Manual Mode — Explicit Positioning & Overlapping",
+              "mode": "manual",
+              "columns": 6,
+              "row_height": 80,
+              "column_gap": 10,
+              "row_gap": 10,
+              "cards": [
+                {
+                  "type": "markdown",
+                  "content": "## Background\nCols 1–6, rows 1–4 (behind everything)",
+                  "grid_options": {
+                    "column_start": 1,
+                    "row_start": 1,
+                    "columns": 6,
+                    "rows": 4,
+                    "z_index": 0
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "### Top-left\n2×2",
+                  "grid_options": {
+                    "column_start": 1,
+                    "row_start": 1,
+                    "columns": 2,
+                    "rows": 2,
+                    "z_index": 1
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "### Top-right\n2×2",
+                  "grid_options": {
+                    "column_start": 5,
+                    "row_start": 1,
+                    "columns": 2,
+                    "rows": 2,
+                    "z_index": 1
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "### Centre Overlay\n2×2 centred at col 3–4, row 2–3",
+                  "grid_options": {
+                    "column_start": 3,
+                    "row_start": 2,
+                    "columns": 2,
+                    "rows": 2,
+                    "z_index": 2
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "### Bottom-left\n3×1",
+                  "grid_options": {
+                    "column_start": 1,
+                    "row_start": 4,
+                    "columns": 3,
+                    "rows": 1,
+                    "z_index": 1
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "### Bottom-right\n3×1",
+                  "grid_options": {
+                    "column_start": 4,
+                    "row_start": 4,
+                    "columns": 3,
+                    "rows": 1,
+                    "z_index": 1
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Custom Spacing",
+          "path": "spacing",
+          "icon": "mdi:resize",
+          "badges": [],
+          "cards": [
+            {
+              "type": "custom:mosaic-card",
+              "title": "Fixed Row Height (120px) + Large Gaps (24px)",
+              "mode": "auto",
+              "columns": 3,
+              "row_height": 120,
+              "column_gap": 24,
+              "row_gap": 24,
+              "cards": [
+                {
+                  "type": "markdown",
+                  "content": "### A\n1×1",
+                  "grid_options": {
+                    "columns": 1,
+                    "rows": 1
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "### B\n1×1",
+                  "grid_options": {
+                    "columns": 1,
+                    "rows": 1
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "### C\n1×1",
+                  "grid_options": {
+                    "columns": 1,
+                    "rows": 1
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "### D — Wide\n2 cols × 2 rows",
+                  "grid_options": {
+                    "columns": 2,
+                    "rows": 2
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "### E\n1×2",
+                  "grid_options": {
+                    "columns": 1,
+                    "rows": 2
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "### F\n3 cols × 1 row (full width)",
+                  "grid_options": {
+                    "columns": 3,
+                    "rows": 1
+                  }
+                }
+              ]
+            },
+            {
+              "type": "custom:mosaic-card",
+              "title": "Compact Grid (2px gaps, 5 columns)",
+              "mode": "auto",
+              "columns": 5,
+              "column_gap": 2,
+              "row_gap": 2,
+              "cards": [
+                {
+                  "type": "markdown",
+                  "content": "1",
+                  "grid_options": {
+                    "columns": 1,
+                    "rows": 1
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "2",
+                  "grid_options": {
+                    "columns": 1,
+                    "rows": 1
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "3",
+                  "grid_options": {
+                    "columns": 1,
+                    "rows": 1
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "4",
+                  "grid_options": {
+                    "columns": 1,
+                    "rows": 1
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "5",
+                  "grid_options": {
+                    "columns": 1,
+                    "rows": 1
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "Wide (3)",
+                  "grid_options": {
+                    "columns": 3,
+                    "rows": 1
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "6",
+                  "grid_options": {
+                    "columns": 1,
+                    "rows": 1
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "7",
+                  "grid_options": {
+                    "columns": 1,
+                    "rows": 1
+                  }
+                },
+                {
+                  "type": "markdown",
+                  "content": "Full (5)",
+                  "grid_options": {
+                    "columns": 5,
+                    "rows": 1
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

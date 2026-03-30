@@ -71,7 +71,10 @@ async function getHassTokens(): Promise<string> {
 async function globalSetup(_config: FullConfig) {
   fs.mkdirSync(path.dirname(AUTH_FILE), { recursive: true });
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
   const context = await browser.newContext();
   const page = await context.newPage();
 

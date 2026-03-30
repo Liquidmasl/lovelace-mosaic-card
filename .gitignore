@@ -25,9 +25,6 @@ test/fixtures/ha-config/.storage/frontend.system_data
 test/fixtures/ha-config/.storage/homeassistant.exposed_entities
 test/fixtures/ha-config/.storage/http
 test/fixtures/ha-config/.storage/http.auth
-test/fixtures/ha-config/.storage/lovelace.lovelace
 test/fixtures/ha-config/.storage/lovelace.mosaic_test
-test/fixtures/ha-config/.storage/lovelace_dashboards
 test/fixtures/ha-config/.storage/trace.saved_traces
 test/fixtures/ha-config/.ha_run.lock
-test/fixtures/ha-config/.storage/auth
