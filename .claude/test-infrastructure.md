@@ -9,8 +9,9 @@ docker compose -f docker-compose.test.yml down            # stop + remove
 
 - **URL:** `http://localhost:18123`
 - **Credentials:** `test` / `test`
-- **Long-lived access token (expires 2036):**
-  `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiI1ZjAxMzIwNjIxOGE0NzVmODJkNjM1ZGI4ZjUwZjMzZSIsImlhdCI6MTc3NDgxNzczNCwiZXhwIjoyMDkwMTc3NzM0fQ.unp6ntjlShJOR_C2JiigQu3zGwAWs6J6P0gwX7Oh2ps`
+- **Long-lived access token (expires 2037):**
+  `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJiZDZlNjI5YjFiN2U0MzY0OTBjMmNlOTEyYjY2MjM3NyIsImlhdCI6MTc3NDgyOTcxNiwiZXhwIjoyMDkwMTg5NzE2fQ.mGhq8ycuNBtpJUa5VX5kPf52k44wCsaUiGOl2Fz9zTA`
+- **Token is stable** because `test/fixtures/ha-config/.storage/auth` is committed — same user ID persists across container restarts. If the auth fixture is ever wiped, run `scripts/create-ha-token.mjs` to regenerate.
 
 **Server networking quirk:** This server runs in a Proxmox LXC container that blocks Docker bridge networking (sysctl `net.ipv4.ip_unprivileged_port_start` permission denied). The compose file uses `network_mode: host` to work around this. HA is configured via `http.server_port: 18123` in `configuration.yaml` so the test URL remains `http://localhost:18123`.
 

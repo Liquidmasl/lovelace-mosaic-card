@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "minor_version": 1,
+  "key": "lovelace_resources",
+  "data": {
+    "items": [
+      {
+        "id": "610ff5319cb244109e36ae47da9e8a2b",
+        "url": "/local/mosaic-card.js",
+        "type": "module"
+      }
+    ]
+  }
+}
