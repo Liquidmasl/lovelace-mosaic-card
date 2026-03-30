@@ -7,7 +7,7 @@ const dev = process.env.ROLLUP_WATCH === "true";
 export default {
   input: "src/mosaic-card.ts",
   output: {
-    file: "mosaic-card.js",
+    file: "dist/mosaic-card.js",
     format: "es",
     sourcemap: false,
   },
