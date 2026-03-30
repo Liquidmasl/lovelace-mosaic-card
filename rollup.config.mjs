@@ -10,6 +10,7 @@ export default {
     file: "mosaic-card.js",
     format: "es",
     sourcemap: false,
+    inlineDynamicImports: true,
   },
   plugins: [
     resolve(),
