@@ -128,6 +128,10 @@ win.customCards.push({ type: "mosaic-card", name: "Mosaic Card", description: ".
 - **Edit mode:** Press `e` key OR navigate to `/lovelace/home?edit=1`
 - **Card editor:** Wait 8s for WS, click `hui-card-options ha-button`, wait 5s — dialog in `home-assistant.shadowRoot`
 - **Deep-dive:** load `.claude/test-infrastructure.md` for full patterns, shadow DOM path, helpers, entity IDs
+- **HA MCP:** use `mcp__homeassistant__*` tools to manage dashboards/cards via API — **do NOT edit `.storage/` files directly** (causes hard-to-debug HA errors)
+- **Lovelace must stay in storage mode** (not YAML mode) — required for the visual card editor (`hui-card-options`)
+- **Loading custom card resources:** add via `mcp__homeassistant__ha_config_set_dashboard_resource` or via `lovelace: resources:` in `configuration.yaml` (works in storage mode; resource loads before first render)
+- **Long-lived token:** baked into `test/fixtures/ha-config/.storage/auth` fixture — stable across restarts. If wiped, run `node scripts/create-ha-token.mjs` and update `/root/global_mcps.json`
 
 ## HA Shadow DOM Chain (critical path)
 
