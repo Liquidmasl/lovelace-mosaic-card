@@ -1,5 +1,7 @@
 import { LitElement, html, css, CSSResultGroup, TemplateResult, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import type { GridSizeValue } from "./mosaic-grid-size-picker";
+import "./mosaic-grid-size-picker";
 
 // ── Config interfaces (mirrored from mosaic-card.ts) ─────────────────────────
 
@@ -16,6 +18,12 @@ interface CardGridOptions {
   row_start?: number;
   z_index?: number;
   styles?: CardStyles;
+  mobile?: {
+    columns?: number;
+    rows?: number;
+    column_start?: number;
+    row_start?: number;
+  };
 }
 
 interface SubCardConfig {
@@ -369,6 +377,15 @@ export class MosaicCardEditor extends LitElement {
     `;
   }
 
+  private _cardGridOptionsChanged(index: number, e: CustomEvent): void {
+    e.stopPropagation();
+    const gridOptions = (e.detail as { value: GridSizeValue }).value;
+    if (!this._config?.cards) return;
+    const cards = [...this._config.cards];
+    cards[index] = { ...cards[index], grid_options: gridOptions as CardGridOptions };
+    this._fireConfigChanged({ ...this._config, cards });
+  }
+
   private _renderCardRow(
     card: SubCardConfig,
     index: number,
@@ -376,32 +393,46 @@ export class MosaicCardEditor extends LitElement {
   ): TemplateResult {
     const cardType = card.type ?? "unknown";
     const displayName = cardType.replace(/^custom:/, "").replace(/-/g, " ");
+    const mode = (this._get("mode") as string) ?? "auto";
+    const gridColumns = (this._get("columns") as number) ?? 4;
 
     return html`
-      <div class="card-row">
-        <div class="card-row-info">
-          <ha-icon icon="mdi:card-outline" class="card-icon"></ha-icon>
-          <span class="card-name">${displayName}</span>
+      <div class="card-row-container">
+        <div class="card-row">
+          <div class="card-row-info">
+            <ha-icon icon="mdi:card-outline" class="card-icon"></ha-icon>
+            <span class="card-name">${displayName}</span>
+          </div>
+          <div class="card-row-actions">
+            <ha-icon-button
+              .label=${"Move up"}
+              .path=${"M7.41 15.41L12 10.83L16.59 15.41L18 14L12 8L6 14L7.41 15.41Z"}
+              ?disabled=${index === 0}
+              @click=${() => this._moveCard(index, -1)}
+            ></ha-icon-button>
+            <ha-icon-button
+              .label=${"Move down"}
+              .path=${"M7.41 8.59L12 13.17L16.59 8.59L18 10L12 16L6 10L7.41 8.59Z"}
+              ?disabled=${index === total - 1}
+              @click=${() => this._moveCard(index, 1)}
+            ></ha-icon-button>
+            <ha-icon-button
+              .label=${"Delete card"}
+              .path=${"M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12L19 6.41Z"}
+              @click=${() => this._deleteCard(index)}
+            ></ha-icon-button>
+          </div>
         </div>
-        <div class="card-row-actions">
-          <ha-icon-button
-            .label=${"Move up"}
-            .path=${"M7.41 15.41L12 10.83L16.59 15.41L18 14L12 8L6 14L7.41 15.41Z"}
-            ?disabled=${index === 0}
-            @click=${() => this._moveCard(index, -1)}
-          ></ha-icon-button>
-          <ha-icon-button
-            .label=${"Move down"}
-            .path=${"M7.41 8.59L12 13.17L16.59 8.59L18 10L12 16L6 10L7.41 8.59Z"}
-            ?disabled=${index === total - 1}
-            @click=${() => this._moveCard(index, 1)}
-          ></ha-icon-button>
-          <ha-icon-button
-            .label=${"Delete card"}
-            .path=${"M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12L19 6.41Z"}
-            @click=${() => this._deleteCard(index)}
-          ></ha-icon-button>
-        </div>
+        <ha-expansion-panel .header=${"Layout"} class="card-layout-panel">
+          <div class="card-layout-content">
+            <mosaic-grid-size-picker
+              .mode=${mode as "auto" | "manual"}
+              .gridColumns=${gridColumns}
+              .value=${(card.grid_options ?? {}) as GridSizeValue}
+              @value-changed=${(e: CustomEvent) => this._cardGridOptionsChanged(index, e)}
+            ></mosaic-grid-size-picker>
+          </div>
+        </ha-expansion-panel>
       </div>
     `;
   }
@@ -500,14 +531,27 @@ export class MosaicCardEditor extends LitElement {
         margin-bottom: 12px;
       }
 
+      .card-row-container {
+        border: 1px solid var(--divider-color, #e0e0e0);
+        border-radius: 4px;
+        background: var(--card-background-color, #fff);
+        overflow: hidden;
+      }
+
       .card-row {
         display: flex;
         align-items: center;
         justify-content: space-between;
         padding: 4px 8px;
-        border: 1px solid var(--divider-color, #e0e0e0);
-        border-radius: 4px;
-        background: var(--card-background-color, #fff);
+      }
+
+      .card-layout-panel {
+        border-top: 1px solid var(--divider-color, #e0e0e0);
+        border-radius: 0;
+      }
+
+      .card-layout-content {
+        padding: 0 8px 8px;
       }
 
       .card-row-info {

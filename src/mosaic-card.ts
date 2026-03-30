@@ -22,6 +22,17 @@ interface CardGridOptions {
   z_index?: number;
   /** Manual mode only: per-card CSS style overrides */
   styles?: CardStyles;
+  /**
+   * 12-column fallback layout used when the mosaic card is configured with
+   * more than 12 columns. Mirrors the root fields but applies to narrower
+   * viewports / HA section views that cap at 12 columns.
+   */
+  mobile?: {
+    columns?: number;
+    rows?: number;
+    column_start?: number;
+    row_start?: number;
+  };
 }
 
 interface SubCardConfig {
