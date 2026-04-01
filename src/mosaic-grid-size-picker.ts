@@ -55,6 +55,9 @@ export class MosaicGridSizePicker extends LitElement {
   /** Total columns in the parent mosaic card grid. */
   @property({ type: Number }) gridColumns = 12;
 
+  /** Total rows in the parent mosaic card grid. */
+  @property({ type: Number }) gridRows = 5;
+
   /** Current grid_options for this sub-card. */
   @property({ attribute: false }) value: GridSizeValue = {};
 
@@ -95,7 +98,7 @@ export class MosaicGridSizePicker extends LitElement {
 
   /** How many rows to show in the picker visualization. */
   private get _pickerRows(): number {
-    return Math.max(this._rowStart + this._rowSpan + 1, 5);
+    return this.gridRows;
   }
 
   // ── Event helpers ───────────────────────────────────────────────────────────
@@ -174,6 +177,7 @@ export class MosaicGridSizePicker extends LitElement {
     const dx = Math.round((x - ds.startX) / ds.cellWidth);
     const dy = Math.round((y - ds.startY) / ds.cellHeight);
     const maxCols = this._viewColumns;
+    const maxRows = this._pickerRows;
 
     const updates: Partial<GridSizeValue> = {};
 
@@ -194,13 +198,13 @@ export class MosaicGridSizePicker extends LitElement {
         break;
       }
       case "s": {
-        updates.rows = Math.max(1, ds.origRows + dy);
+        updates.rows = Math.min(Math.max(1, ds.origRows + dy), maxRows);
         break;
       }
       case "w": {
         const newStart = Math.max(
           1,
-          Math.min(ds.origColStart + ds.origColumns - 1, ds.origColStart + dx),
+          Math.min(maxCols - ds.origColumns + 1, ds.origColStart + dx),
         );
         updates.column_start = newStart;
         updates.columns = Math.max(1, ds.origColumns - (newStart - ds.origColStart));
@@ -209,7 +213,7 @@ export class MosaicGridSizePicker extends LitElement {
       case "n": {
         const newRowStart = Math.max(
           1,
-          Math.min(ds.origRowStart + ds.origRows - 1, ds.origRowStart + dy),
+          Math.min(maxRows - ds.origRows + 1, ds.origRowStart + dy),
         );
         updates.row_start = newRowStart;
         updates.rows = Math.max(1, ds.origRows - (newRowStart - ds.origRowStart));
@@ -364,7 +368,6 @@ export class MosaicGridSizePicker extends LitElement {
                 <input
                   type="number"
                   min="1"
-                  max="${cols}"
                   .value="${String(colStart)}"
                   @change=${(e: Event) => this._onInputChange(e, "column_start")}
                 />
@@ -377,7 +380,6 @@ export class MosaicGridSizePicker extends LitElement {
           <input
             type="number"
             min="1"
-            max="${isManual ? cols - colStart + 1 : cols}"
             .value="${String(colSpan)}"
             @change=${(e: Event) => this._onInputChange(e, "columns")}
           />
