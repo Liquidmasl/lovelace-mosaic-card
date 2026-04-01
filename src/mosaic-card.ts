@@ -53,12 +53,8 @@ interface MosaicCardConfig {
    * Number of equal-width columns in the grid.
    * Defaults to the mosaic card's own HA grid size (getGridOptions().columns = 12).
    */
+  rows?: number;
   columns?: number;
-  /**
-   * Row height. "auto" (default) → minmax(min-content, auto).
-   * A number is treated as pixels. A string is used verbatim.
-   */
-  row_height?: "auto" | number | string;
   /** Gap between columns in px. Default 8. */
   column_gap?: number;
   /** Gap between rows in px. Default 8. */
@@ -73,6 +69,11 @@ interface MosaicCardConfig {
   /** Strip card borders from sub-cards. Default true. */
   strip_borders?: boolean;
   cards?: SubCardConfig[];
+  /**
+   * Grid size options set by HA's section view Layout tab.
+   * These are the values users configure when resizing the card in the UI.
+   */
+  grid_options?: HAGridOptions;
 }
 
 // ── HA type stubs ─────────────────────────────────────────────────────────────
@@ -82,6 +83,11 @@ interface HAGridOptions {
   rows?: number | string;
   min_columns?: number;
   min_rows?: number;
+}
+
+interface LovelaceSectionConfig {
+  column_span?: number;
+  [key: string]: unknown;
 }
 
 interface HACardElement extends HTMLElement {
@@ -113,6 +119,7 @@ declare global {
 @customElement("mosaic-card")
 export class MosaicCard extends LitElement {
   @property({ attribute: false }) public hass?: unknown;
+  @property({ attribute: false }) public sectionConfig?: LovelaceSectionConfig;
 
   @state() private _config?: MosaicCardConfig;
   @state() private _cardElements: HACardElement[] = [];
@@ -166,6 +173,11 @@ export class MosaicCard extends LitElement {
     } else {
       this._config = config;
     }
+
+    if (config.grid_options) {
+      console.info("Mosaic card grid options from Layout tab:", config.grid_options);
+    }
+
     this._buildCardElements();
   }
 
@@ -236,22 +248,25 @@ export class MosaicCard extends LitElement {
   private _containerStyle(): string {
     const cfg = this._config!;
     const mode = cfg.mode ?? "auto";
-    const columns = cfg.columns ?? (this.getGridOptions().columns as number);
+    const rows = cfg.rows ?? 8;
     const colGap = cfg.column_gap ?? 8;
     const rowGap = cfg.row_gap ?? 8;
-    const rowHeight = cfg.row_height ?? "auto";
 
-    const gridAutoRows =
-      rowHeight === "auto"
-        ? "minmax(min-content, auto)"
-        : typeof rowHeight === "number"
-          ? `${rowHeight}px`
-          : String(rowHeight);
+    // Use Layout tab's columns if available, otherwise fall back to config.columns or default
+    let columns: number;
+    const gridColumns = cfg.grid_options?.columns;
+    if (typeof gridColumns === "number") {
+      columns = gridColumns;
+    } else if (typeof cfg.columns === "number") {
+      columns = cfg.columns;
+    } else {
+      columns = 12;
+    }
 
     const parts = [
       `grid-template-columns: repeat(${columns}, 1fr)`,
       `gap: ${rowGap}px ${colGap}px`,
-      `grid-auto-rows: ${gridAutoRows}`,
+      `grid-template-rows: repeat(${rows}, calc(var(--row-height) - (${rowGap}px - var(--row-gap)) + ${rowGap}px / ${rows}))`,
     ];
 
     if (mode === "auto") {
@@ -347,8 +362,9 @@ export class MosaicCard extends LitElement {
   public getGridOptions(): HAGridOptions {
     return {
       columns: 12,
-      rows: "auto",
+      rows: 'auto',
       min_columns: 3,
+      min_rows: 2,
     };
   }
 
@@ -361,7 +377,6 @@ export class MosaicCard extends LitElement {
     return {
       type: "custom:mosaic-card",
       mode: "auto",
-      columns: 4,
       column_gap: 8,
       row_gap: 8,
       strip_borders: true,
