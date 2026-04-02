@@ -186,40 +186,36 @@ export class MosaicGridSizePicker extends LitElement {
 
     switch (ds.type) {
       case "move": {
-        updates.column_start = Math.max(
-          1,
-          Math.min(maxCols - ds.origColumns + 1, ds.origColStart + dx),
-        );
-        updates.row_start = Math.max(1, ds.origRowStart + dy);
+        const colStart = Math.max(1, Math.min(maxCols - ds.origColumns + 1, ds.origColStart + dx));
+        const rowStart = Math.max(1, Math.min(maxRows - ds.origRows + 1, ds.origRowStart + dy));
+        updates.column_start = colStart;
+        updates.row_start = rowStart;
         break;
       }
       case "e": {
-        updates.columns = Math.max(
-          1,
-          Math.min(maxCols - ds.origColStart + 1, ds.origColumns + dx),
-        );
+        // east edge: span can grow until it hits the right wall
+        updates.columns = Math.max(1, Math.min(maxCols - ds.origColStart + 1, ds.origColumns + dx));
         break;
       }
       case "s": {
-        updates.rows = Math.min(Math.max(1, ds.origRows + dy), maxRows);
+        // south edge: span can grow until it hits the bottom wall
+        updates.rows = Math.max(1, Math.min(maxRows - ds.origRowStart + 1, ds.origRows + dy));
         break;
       }
       case "w": {
-        const newStart = Math.max(
-          1,
-          Math.min(maxCols - ds.origColumns + 1, ds.origColStart + dx),
-        );
+        // west edge: moving start left/right while keeping east edge fixed
+        const eastEdge = ds.origColStart + ds.origColumns - 1;
+        const newStart = Math.max(1, Math.min(eastEdge, ds.origColStart + dx));
         updates.column_start = newStart;
-        updates.columns = Math.max(1, ds.origColumns - (newStart - ds.origColStart));
+        updates.columns = eastEdge - newStart + 1;
         break;
       }
       case "n": {
-        const newRowStart = Math.max(
-          1,
-          Math.min(maxRows - ds.origRows + 1, ds.origRowStart + dy),
-        );
+        // north edge: moving start up/down while keeping south edge fixed
+        const southEdge = ds.origRowStart + ds.origRows - 1;
+        const newRowStart = Math.max(1, Math.min(southEdge, ds.origRowStart + dy));
         updates.row_start = newRowStart;
-        updates.rows = Math.max(1, ds.origRows - (newRowStart - ds.origRowStart));
+        updates.rows = southEdge - newRowStart + 1;
         break;
       }
     }
@@ -255,20 +251,20 @@ export class MosaicGridSizePicker extends LitElement {
     const width = (colSpan / cols) * 100;
     const height = (rowSpan / rows) * 100;
 
-    // Grid lines via repeating gradients — computed in JS so the percentage step
-    // can reference actual col/row counts without CSS calc limitations.
-    const colStep = (100 / cols).toFixed(4);
-    const rowStep = (100 / rows).toFixed(4);
-    const lineColor = "var(--divider-color, rgba(0,0,0,.12))";
-    const vizStyle = [
-      `background-image:`,
-      `  repeating-linear-gradient(to right,`,
-      `    ${lineColor} 0, ${lineColor} 1px,`,
-      `    transparent 1px, transparent ${colStep}%),`,
-      `  repeating-linear-gradient(to bottom,`,
-      `    ${lineColor} 0, ${lineColor} 1px,`,
-      `    transparent 1px, transparent ${rowStep}%)`,
-    ].join(" ");
+    // Dot grid: one dot per grid intersection, rendered as an SVG data URI so
+    // dots stay crisp at any zoom level (no sub-pixel 1px line disappearing).
+    const dotR = 0.025; // radius of the dots in viewBox units (100×100)
+    const cellW = 100 / cols;
+    const cellH = 100 / rows;
+    // Build SVG in percentage-viewBox space (100×100) with one circle per intersection.
+    const dots: string[] = [];
+    for (let c = 0; c <= cols; c++) {
+      for (let r = 0; r <= rows; r++) {
+        dots.push(`<circle cx="${(c * cellW).toFixed(3)}" cy="${(r * cellH).toFixed(3)}" r="${dotR}"/>`);
+      }
+    }
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" preserveAspectRatio="none"><g fill="rgba(128,128,128,0.35)">${dots.join("")}</g></svg>`;
+    const vizStyle = `background-image: url('data:image/svg+xml,${encodeURIComponent(svg)}'); background-size: 100% 100%;`;
 
     if (this.overlay) {
       return html`
@@ -534,7 +530,7 @@ export class MosaicGridSizePicker extends LitElement {
       /* Highlighted card rectangle */
       .card-rect {
         position: absolute;
-        background: color-mix(in srgb, var(--primary-color, #007af5) 40%, transparent);
+        background: color-mix(in srgb, var(--primary-color, #007af5) 5%, transparent);
         border: 2px solid var(--primary-color, #007af5);
         border-radius: 2px;
         box-sizing: border-box;
