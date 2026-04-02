@@ -130,6 +130,8 @@ export class MosaicCard extends LitElement {
     return css`
       :host {
         display: block;
+        --row-height: 56px;
+        --row-gap: 8px;
       }
 
       .mosaic-grid {
@@ -248,7 +250,7 @@ export class MosaicCard extends LitElement {
   private _containerStyle(): string {
     const cfg = this._config!;
     const mode = cfg.mode ?? "auto";
-    const rows = cfg.rows ?? 8;
+    const rows = cfg.grid_options?.rows ?? cfg.rows ?? 8;
     const colGap = cfg.column_gap ?? 8;
     const rowGap = cfg.row_gap ?? 8;
 
