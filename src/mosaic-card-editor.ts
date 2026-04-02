@@ -1,5 +1,6 @@
-import { LitElement, html, css, CSSResultGroup, TemplateResult, nothing } from "lit";
+import { LitElement, html, css, CSSResultGroup, TemplateResult, nothing, PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import { createRef, ref, Ref } from "lit/directives/ref.js";
 import type { GridSizeValue } from "./mosaic-grid-size-picker";
 import "./mosaic-grid-size-picker";
 
@@ -104,7 +105,59 @@ export class MosaicCardEditor extends LitElement {
   @state() private _yamlValue = "";
   @state() private _selectedCardIndex = 0;
 
+  private _previewRef: Ref<HTMLElement & { setConfig(c: unknown): void; hass: unknown }> = createRef();
+  private _previewContainerRef: Ref<HTMLElement> = createRef();
+  private _resizeObserver?: ResizeObserver;
+  @state() private _previewScale = 1;
+
+  // ── Preview scaling ──────────────────────────────────────────────────────────
+
+  // Each column is 24px wide (HA section view column width).
+  private _naturalPreviewWidth(): number {
+    const colGap = this._config?.column_gap ?? 8;
+    const cols = this._getInternalGridColumns();
+    return cols * 24 + (cols - 1) * colGap;
+  }
+
+  private _updatePreviewScale(): void {
+    const container = this._previewContainerRef.value;
+    if (!container) return;
+    this._previewScale = container.clientWidth / this._naturalPreviewWidth();
+  }
+
   // ── HA lifecycle ────────────────────────────────────────────────────────────
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    this._resizeObserver = new ResizeObserver(() => this._updatePreviewScale());
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this._resizeObserver?.disconnect();
+  }
+
+  protected firstUpdated(): void {
+    const container = this._previewContainerRef.value;
+    if (container) {
+      this._resizeObserver?.observe(container);
+      this._updatePreviewScale();
+    }
+  }
+
+  protected updated(changedProps: PropertyValues): void {
+    super.updated(changedProps);
+    const preview = this._previewRef.value;
+    if (preview) {
+      if (changedProps.has("_config") && this._config) {
+        preview.setConfig(this._config);
+        this._updatePreviewScale();
+      }
+      if (changedProps.has("hass") && this.hass) {
+        preview.hass = this.hass;
+      }
+    }
+  }
 
   public setConfig(config: MosaicCardConfig): void {
     this._config = config;
@@ -261,11 +314,75 @@ export class MosaicCardEditor extends LitElement {
   }
 
   private _renderGui(mode: string): TemplateResult {
+    const cards = (this._get("cards") as SubCardConfig[]) ?? [];
+    const gridColumns = this._getInternalGridColumns();
+    const gridRows = this._getInternalGridRows();
+    const selected = Math.min(this._selectedCardIndex, cards.length - 1);
+    const selectedCard = cards[selected];
+    const naturalWidth = this._naturalPreviewWidth();
+    const scale = this._previewScale;
+
     return html`
+      <div class="preview-area">
+        <div class="card-sidebar">
+          ${cards.map((card, i) => this._renderSidebarItem(card, i, i === selected, cards.length))}
+        </div>
+        <div class="preview-container" ${ref(this._previewContainerRef)}>
+          <mosaic-card
+            ${ref(this._previewRef)}
+            style="width: ${naturalWidth}px; zoom: ${scale};"
+          ></mosaic-card>
+          ${selectedCard ? html`
+            <mosaic-grid-size-picker
+              overlay
+              .mode=${mode as "auto" | "manual"}
+              .gridColumns=${gridColumns}
+              .gridRows=${gridRows}
+              .value=${(selectedCard.grid_options ?? {}) as GridSizeValue}
+              @value-changed=${(e: CustomEvent) => {
+                const gridOptions = (e.detail as { value: GridSizeValue }).value;
+                const updated = [...cards];
+                updated[selected] = { ...updated[selected], grid_options: gridOptions as CardGridOptions };
+                this._fireConfigChanged({ ...this._config!, cards: updated });
+              }}
+            ></mosaic-grid-size-picker>
+          ` : nothing}
+        </div>
+      </div>
       ${this._renderGridOptionsInfo()}
       ${this._renderModeAndGridSection(mode)}
       ${this._renderCardsSection()}
       ${this._renderAppearanceSection()}
+    `;
+  }
+
+  private _renderSidebarItem(card: SubCardConfig, index: number, selected: boolean, total: number): TemplateResult {
+    const displayName = (card.type ?? "unknown").replace(/^custom:/, "").replace(/-/g, " ");
+    return html`
+      <div class="sidebar-item ${selected ? "selected" : ""}" @click=${() => { this._selectedCardIndex = index; }}>
+        <div class="sidebar-item-main">
+          <div class="card-radio" aria-checked=${selected ? "true" : "false"}></div>
+          <span class="sidebar-item-name">${displayName}</span>
+        </div>
+        ${selected ? html`
+          <div class="sidebar-item-actions">
+            <ha-icon-button .label=${"Move up"}
+              .path=${"M7.41 15.41L12 10.83L16.59 15.41L18 14L12 8L6 14L7.41 15.41Z"}
+              ?disabled=${index === 0}
+              @click=${(e: Event) => { e.stopPropagation(); this._moveCard(index, -1); }}
+            ></ha-icon-button>
+            <ha-icon-button .label=${"Move down"}
+              .path=${"M7.41 8.59L12 13.17L16.59 8.59L18 10L12 16L6 10L7.41 8.59Z"}
+              ?disabled=${index === total - 1}
+              @click=${(e: Event) => { e.stopPropagation(); this._moveCard(index, 1); }}
+            ></ha-icon-button>
+            <ha-icon-button .label=${"Delete"}
+              .path=${"M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12L19 6.41Z"}
+              @click=${(e: Event) => { e.stopPropagation(); this._deleteCard(index); }}
+            ></ha-icon-button>
+          </div>
+        ` : nothing}
+      </div>
     `;
   }
 
@@ -418,10 +535,6 @@ export class MosaicCardEditor extends LitElement {
       <div class="section">
         <div class="section-title">Cards</div>
 
-        <div class="card-list">
-          ${cards.map((card, index) => this._renderCardRow(card, index, cards.length, index === selected))}
-        </div>
-
         <div class="add-card">
           <hui-card-picker
             .hass=${this.hass}
@@ -456,49 +569,6 @@ export class MosaicCardEditor extends LitElement {
     this._fireConfigChanged({ ...this._config, cards });
   }
 
-  private _renderCardRow(
-    card: SubCardConfig,
-    index: number,
-    total: number,
-    selected: boolean,
-  ): TemplateResult {
-    const cardType = card.type ?? "unknown";
-    const displayName = cardType.replace(/^custom:/, "").replace(/-/g, " ");
-
-    return html`
-      <div
-        class="card-row-container ${selected ? "selected" : ""}"
-        @click=${() => { this._selectedCardIndex = index; }}
-      >
-        <div class="card-row">
-          <div class="card-row-info">
-            <div class="card-radio" aria-checked=${selected ? "true" : "false"}></div>
-            <ha-icon icon="mdi:card-outline" class="card-icon"></ha-icon>
-            <span class="card-name">${displayName}</span>
-          </div>
-          <div class="card-row-actions">
-            <ha-icon-button
-              .label=${"Move up"}
-              .path=${"M7.41 15.41L12 10.83L16.59 15.41L18 14L12 8L6 14L7.41 15.41Z"}
-              ?disabled=${index === 0}
-              @click=${(e: Event) => { e.stopPropagation(); this._moveCard(index, -1); }}
-            ></ha-icon-button>
-            <ha-icon-button
-              .label=${"Move down"}
-              .path=${"M7.41 8.59L12 13.17L16.59 8.59L18 10L12 16L6 10L7.41 8.59Z"}
-              ?disabled=${index === total - 1}
-              @click=${(e: Event) => { e.stopPropagation(); this._moveCard(index, 1); }}
-            ></ha-icon-button>
-            <ha-icon-button
-              .label=${"Delete card"}
-              .path=${"M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12L19 6.41Z"}
-              @click=${(e: Event) => { e.stopPropagation(); this._deleteCard(index); }}
-            ></ha-icon-button>
-          </div>
-        </div>
-      </div>
-    `;
-  }
 
   // ── Section: Appearance ──────────────────────────────────────────────────────
 
@@ -587,37 +657,70 @@ export class MosaicCardEditor extends LitElement {
         margin-top: 2px;
       }
 
-      .card-list {
+      /* ── Preview area: sidebar + preview side by side ── */
+
+      .preview-area {
         display: flex;
-        flex-direction: column;
-        gap: 4px;
-        margin-bottom: 12px;
+        gap: 8px;
+        align-items: flex-start;
+        margin-bottom: 16px;
       }
 
-      .card-row-container {
+      .card-sidebar {
+        width: 120px;
+        flex-shrink: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+
+      .sidebar-item {
         border: 1px solid var(--divider-color, #e0e0e0);
         border-radius: 4px;
         background: var(--card-background-color, #fff);
-        overflow: hidden;
         cursor: pointer;
         transition: border-color 0.15s, background 0.15s;
+        overflow: hidden;
       }
 
-      .card-row-container.selected {
+      .sidebar-item.selected {
         border-color: var(--primary-color);
         background: color-mix(in srgb, var(--primary-color) 8%, var(--card-background-color, #fff));
       }
 
-      .card-row {
+      .sidebar-item-main {
         display: flex;
         align-items: center;
+        gap: 6px;
+        padding: 5px 6px;
+      }
+
+      .sidebar-item-name {
+        font-size: 0.75rem;
+        text-transform: capitalize;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        flex: 1;
+        min-width: 0;
+      }
+
+      .sidebar-item-actions {
+        display: flex;
         justify-content: space-between;
-        padding: 4px 8px;
+        border-top: 1px solid var(--divider-color, #e0e0e0);
+        padding: 2px 0;
+      }
+
+      .sidebar-item-actions ha-icon-button {
+        --mdc-icon-button-size: 28px;
+        --mdc-icon-size: 14px;
+        flex: 1;
       }
 
       .card-radio {
-        width: 16px;
-        height: 16px;
+        width: 12px;
+        height: 12px;
         border-radius: 50%;
         border: 2px solid var(--divider-color, #bbb);
         flex-shrink: 0;
@@ -625,10 +728,12 @@ export class MosaicCardEditor extends LitElement {
         box-sizing: border-box;
       }
 
-      .card-row-container.selected .card-radio {
+      .sidebar-item.selected .card-radio {
         border-color: var(--primary-color);
-        border-width: 5px;
+        border-width: 4px;
       }
+
+      /* ── Preview container ── */
 
       .grid-picker-section {
         margin-top: 12px;
@@ -647,40 +752,6 @@ export class MosaicCardEditor extends LitElement {
         letter-spacing: 0.05em;
       }
 
-      .card-row-info {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        flex: 1;
-        min-width: 0;
-      }
-
-      .card-icon {
-        --mdc-icon-size: 20px;
-        color: var(--secondary-text-color);
-        flex-shrink: 0;
-      }
-
-      .card-name {
-        font-size: 0.875rem;
-        text-transform: capitalize;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-
-      .card-row-actions {
-        display: flex;
-        align-items: center;
-        gap: 0;
-        flex-shrink: 0;
-      }
-
-      .card-row-actions ha-icon-button {
-        --mdc-icon-button-size: 32px;
-        --mdc-icon-size: 18px;
-      }
-
       .add-card {
         margin-top: 8px;
       }
@@ -691,6 +762,21 @@ export class MosaicCardEditor extends LitElement {
 
       .section-content {
         padding: 8px 0;
+      }
+
+      .preview-container {
+        position: relative;
+        flex: 1;
+        min-width: 0;
+        border: 1px solid var(--divider-color, #e0e0e0);
+        border-radius: 4px;
+        overflow: hidden;
+        background: var(--secondary-background-color, #f5f5f5);
+      }
+
+      .preview-container mosaic-card {
+        pointer-events: none;
+        display: block;
       }
 
       ha-code-editor {

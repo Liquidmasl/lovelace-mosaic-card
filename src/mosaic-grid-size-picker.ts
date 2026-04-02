@@ -58,6 +58,9 @@ export class MosaicGridSizePicker extends LitElement {
   /** Total rows in the parent mosaic card grid. */
   @property({ type: Number }) gridRows = 5;
 
+  /** Overlay mode: transparent background, full height, no inputs. */
+  @property({ type: Boolean }) overlay = false;
+
   /** Current grid_options for this sub-card. */
   @property({ attribute: false }) value: GridSizeValue = {};
 
@@ -267,6 +270,38 @@ export class MosaicGridSizePicker extends LitElement {
       `    transparent 1px, transparent ${rowStep}%)`,
     ].join(" ");
 
+    if (this.overlay) {
+      return html`
+        <div class="grid-viz overlay" style="${vizStyle}">
+          <div
+            class="card-rect${isManual ? " draggable" : ""}${this._dragging ? " dragging" : ""}"
+            style="left:${left}%;top:${top}%;width:${width}%;height:${height}%"
+            @mousedown=${isManual ? (e: MouseEvent) => this._startDrag(e, "move") : undefined}
+            @touchstart=${isManual ? (e: TouchEvent) => this._startDrag(e, "move") : undefined}
+          >
+            <div class="handle s"
+              @mousedown=${(e: MouseEvent) => { e.stopPropagation(); this._startDrag(e, "s"); }}
+              @touchstart=${(e: TouchEvent) => { e.stopPropagation(); this._startDrag(e, "s"); }}
+            ></div>
+            <div class="handle e"
+              @mousedown=${(e: MouseEvent) => { e.stopPropagation(); this._startDrag(e, "e"); }}
+              @touchstart=${(e: TouchEvent) => { e.stopPropagation(); this._startDrag(e, "e"); }}
+            ></div>
+            ${isManual ? html`
+              <div class="handle n"
+                @mousedown=${(e: MouseEvent) => { e.stopPropagation(); this._startDrag(e, "n"); }}
+                @touchstart=${(e: TouchEvent) => { e.stopPropagation(); this._startDrag(e, "n"); }}
+              ></div>
+              <div class="handle w"
+                @mousedown=${(e: MouseEvent) => { e.stopPropagation(); this._startDrag(e, "w"); }}
+                @touchstart=${(e: TouchEvent) => { e.stopPropagation(); this._startDrag(e, "w"); }}
+              ></div>
+            ` : ""}
+          </div>
+        </div>
+      `;
+    }
+
     return html`
       ${needsToggle
         ? html`
@@ -470,6 +505,30 @@ export class MosaicGridSizePicker extends LitElement {
         user-select: none;
         -webkit-user-select: none;
         touch-action: none;
+      }
+
+      /* Overlay mode: transparent, fills parent, pointer-events only on handles */
+      :host([overlay]) {
+        position: absolute;
+        inset: 0;
+        padding: 0;
+        pointer-events: none;
+      }
+
+      .grid-viz.overlay {
+        height: 100%;
+        background: transparent;
+        border: none;
+        border-radius: 0;
+        pointer-events: none;
+      }
+
+      .grid-viz.overlay .card-rect {
+        pointer-events: auto;
+      }
+
+      .grid-viz.overlay .handle {
+        pointer-events: auto;
       }
 
       /* Highlighted card rectangle */
