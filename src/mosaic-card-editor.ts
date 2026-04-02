@@ -122,7 +122,7 @@ export class MosaicCardEditor extends LitElement {
   private _updatePreviewScale(): void {
     const container = this._previewContainerRef.value;
     if (!container) return;
-    this._previewScale = container.clientWidth / this._naturalPreviewWidth();
+    this._previewScale = Math.min(1, container.clientWidth / this._naturalPreviewWidth());
   }
 
   // ── HA lifecycle ────────────────────────────────────────────────────────────
@@ -130,6 +130,22 @@ export class MosaicCardEditor extends LitElement {
   connectedCallback(): void {
     super.connectedCallback();
     this._resizeObserver = new ResizeObserver(() => this._updatePreviewScale());
+    // Re-initialize preview after DOM is ready. This handles both the initial mount
+    // and reconnects after the user switches away from the Config tab and back —
+    // in that case _config may have changed while the editor was out of the DOM,
+    // and updated() won't re-fire because _config didn't change on reconnect.
+    this.updateComplete.then(() => {
+      const container = this._previewContainerRef.value;
+      if (container) {
+        this._resizeObserver?.observe(container);
+        this._updatePreviewScale();
+      }
+      const preview = this._previewRef.value;
+      if (preview && this._config) {
+        preview.setConfig(this._config);
+        if (this.hass) preview.hass = this.hass;
+      }
+    });
   }
 
   disconnectedCallback(): void {
@@ -138,25 +154,57 @@ export class MosaicCardEditor extends LitElement {
   }
 
   protected firstUpdated(): void {
-    const container = this._previewContainerRef.value;
-    if (container) {
-      this._resizeObserver?.observe(container);
-      this._updatePreviewScale();
-    }
+    // firstUpdated only fires once — connectedCallback.updateComplete handles subsequent mounts.
   }
 
   protected updated(changedProps: PropertyValues): void {
     super.updated(changedProps);
-    const preview = this._previewRef.value;
-    if (preview) {
-      if (changedProps.has("_config") && this._config) {
+
+    if (changedProps.has("_config") && this._config) {
+      // If column count shrank, clamp sub-cards that now extend outside the grid.
+      const prevConfig = changedProps.get("_config") as MosaicCardConfig | undefined;
+      const prevCols = prevConfig ? this._getGridColumnsFrom(prevConfig) : undefined;
+      const newCols = this._getInternalGridColumns();
+      if (prevCols !== undefined && newCols < prevCols) {
+        this._clampCardsToColumns(newCols);
+        // Don't return — still update preview and scale with the current config now.
+      }
+
+      const preview = this._previewRef.value;
+      if (preview) {
         preview.setConfig(this._config);
-        this._updatePreviewScale();
       }
-      if (changedProps.has("hass") && this.hass) {
-        preview.hass = this.hass;
-      }
+      // naturalWidth is a pure calculation so update scale immediately,
+      // then again after layout to catch any container dimension changes.
+      this._updatePreviewScale();
+      requestAnimationFrame(() => this._updatePreviewScale());
     }
+
+    if (changedProps.has("hass") && this.hass) {
+      const preview = this._previewRef.value;
+      if (preview) preview.hass = this.hass;
+    }
+  }
+
+  private _getGridColumnsFrom(config: MosaicCardConfig): number {
+    const c = config.grid_options?.columns;
+    if (typeof c === "number") return c;
+    return config.columns ?? 12;
+  }
+
+  private _clampCardsToColumns(newCols: number): void {
+    if (!this._config) return;
+    const cards = (this._config.cards ?? []).map((card) => {
+      const g = card.grid_options as CardGridOptions | undefined;
+      if (!g) return card;
+      const colStart = Math.max(1, g.column_start ?? 1);
+      const colSpan = Math.max(1, g.columns ?? 1);
+      const clampedStart = Math.min(colStart, newCols);
+      const clampedSpan = Math.min(colSpan, newCols - clampedStart + 1);
+      if (clampedStart === colStart && clampedSpan === colSpan) return card;
+      return { ...card, grid_options: { ...g, column_start: clampedStart, columns: clampedSpan } };
+    });
+    this._fireConfigChanged({ ...this._config, cards });
   }
 
   public setConfig(config: MosaicCardConfig): void {
@@ -183,14 +231,6 @@ export class MosaicCardEditor extends LitElement {
     this.dispatchEvent(event);
   }
 
-  private _updateGridOptions(updates: Partial<HAGridOptions>): void {
-    if (!this._config) return;
-    this._fireConfigChanged({
-      ...this._config,
-      grid_options: { ...this._config.grid_options, ...updates },
-    });
-  }
-
   private _getInternalGridColumns(): number {
     const gridColumns = this._config?.grid_options?.columns;
     if (typeof gridColumns === "number") return gridColumns;
@@ -205,9 +245,27 @@ export class MosaicCardEditor extends LitElement {
 
   private _rowsChanged(ev: CustomEvent): void {
     ev.stopPropagation();
-    const rows = (ev.detail as { value: number }).value;
-    this._updateGridOptions({ rows });
+    const newRows = (ev.detail as { value: number }).value;
+
+    // Clamp all sub-cards so none extend beyond the new row count.
+    const cards = (this._config?.cards ?? []).map((card) => {
+      const g = card.grid_options as CardGridOptions | undefined;
+      if (!g) return card;
+      const rowStart = Math.max(1, g.row_start ?? 1);
+      const rowSpan = Math.max(1, g.rows ?? 1);
+      const clampedStart = Math.min(rowStart, newRows);
+      const clampedSpan = Math.min(rowSpan, newRows - clampedStart + 1);
+      if (clampedStart === rowStart && clampedSpan === rowSpan) return card;
+      return { ...card, grid_options: { ...g, row_start: clampedStart, rows: clampedSpan } };
+    });
+
+    this._fireConfigChanged({
+      ...this._config!,
+      cards,
+      grid_options: { ...this._config?.grid_options, rows: newRows },
+    });
   }
+
 
   private _valueChanged(ev: CustomEvent): void {
     ev.stopPropagation();
@@ -327,7 +385,7 @@ export class MosaicCardEditor extends LitElement {
         <div class="card-sidebar">
           ${cards.map((card, i) => this._renderSidebarItem(card, i, i === selected, cards.length))}
         </div>
-        <div class="preview-container" ${ref(this._previewContainerRef)}>
+        <div class="preview-container" style="max-width: ${naturalWidth}px" ${ref(this._previewContainerRef)}>
           <mosaic-card
             ${ref(this._previewRef)}
             style="width: ${naturalWidth}px; zoom: ${scale};"

@@ -19,7 +19,9 @@
 
 ```
 src/
-  mosaic-card.ts             # Main card — single source file
+  mosaic-card.ts             # Main card — renders the mosaic grid
+  mosaic-card-editor.ts      # Visual editor: preview + sidebar + grid pickers
+  mosaic-grid-size-picker.ts # Reusable drag-to-resize grid position picker
 scripts/
   version.js                 # Post-build script: stamps __VERSION__ into dist/mosaic-card.js
   release.sh                 # Run to create a release PR: ./scripts/release.sh <patch|minor|major>
@@ -92,6 +94,35 @@ win.customCards.push({ type: "mosaic-card", name: "Mosaic Card", description: ".
 - `getStubConfig()` — returns minimal default config for card picker preview
 - `hass` property typed as `Record<string, unknown>` (broaden as needed, HA types not vendored)
 - TypeScript `noUnusedLocals`, `noUnusedParameters`, `noImplicitReturns` all enabled — compiler is strict
+
+### Column count: where it comes from (non-obvious)
+
+`mosaic-card-editor._getInternalGridColumns()` reads columns in priority order:
+1. `config.grid_options.columns` — set by HA's native "Layout" tab when user resizes the card in the dashboard
+2. `config.columns` — the mosaic card's own explicit columns field
+3. Default: `12`
+
+There is **no columns slider** in the editor GUI. Column count changes come from HA's native card-size editor, which calls `setConfig()` on the editor. There IS a Rows slider (because HA's native editor caps rows at 8).
+
+### Preview scale in the editor
+
+`_previewScale` = `containerWidth / naturalWidth` where `naturalWidth = cols * 24 + (cols-1) * colGap`.
+
+Scale must be updated both **synchronously** (column count is pure calculation, no DOM needed) and in a **`requestAnimationFrame`** (to catch container size changes after layout). Using only rAF is unreliable — the first rAF can fire before HA calls `setConfig` again with the updated config, leaving the old scale.
+
+**Tab-switch problem**: The HA card editor has Layout/Config/etc. tabs. When the user is on the Layout tab, the mosaic-card-editor element is removed from (or hidden in) the DOM. If columns change there, `setConfig` may fire but `_previewContainerRef.value` is null → `_updatePreviewScale()` silently returns without updating. On reconnect, LitElement does NOT re-fire `updated()` for unchanged state. Fix: use `connectedCallback` + `this.updateComplete.then(...)` to re-init the ResizeObserver, re-calculate scale, and re-send config to the preview on EVERY mount, not just `firstUpdated`.
+
+Pattern in `updated()`:
+```typescript
+this._updatePreviewScale();                          // immediate: pure calc, safe
+requestAnimationFrame(() => this._updatePreviewScale()); // post-layout: catches DOM changes
+```
+
+### Grid constraint clamping
+
+- **Row shrink**: handled in `_rowsChanged()` — iterates all cards and clamps before firing config
+- **Column shrink**: handled in `updated()` — compares prev/new column count from `changedProps.get("_config")`, calls `_clampCardsToColumns(newCols)` if shrank
+- **Never use early `return`** after clamping in `updated()` — this skips `preview.setConfig()` and the scale update, leaving the preview showing stale config until the next cycle triggers it
 
 ---
 
@@ -185,6 +216,17 @@ When a topic needs more detail than a few bullets, create a dedicated file under
 
 - [`.claude/test-infrastructure.md`](.claude/test-infrastructure.md) — Full test infra: container setup, auth pattern, shadow DOM path, Playwright helpers, selector table, demo entity IDs, REST API examples, timing quirks
 
+### Grid picker drag constraints (mosaic-grid-size-picker.ts)
+
+Each drag handle must keep the card inside the grid:
+- `move`: clamp colStart to `[1, maxCols - span + 1]`, rowStart to `[1, maxRows - span + 1]`
+- `e` (east): span ≤ `maxCols - origColStart + 1`
+- `s` (south): span ≤ `maxRows - origRowStart + 1`
+- `w` (west): east edge is **fixed** = `origColStart + origColumns - 1`; newStart clamped `[1, eastEdge]`; span = `eastEdge - newStart + 1`
+- `n` (north): same pattern — south edge fixed, north handle clamped, span = `southEdge - newRowStart + 1`
+
+Common mistake: clamping to `maxRows` directly for south/east handle (ignores where the card starts).
+
 ---
 
 ## What to Update Here (Rule)
@@ -198,4 +240,4 @@ Goal: a cold-start session reads this file (~150 lines), knows where everything 
 
 ---
 
-*Last updated: LQM-65 + LQM-64 (dist/ output, validate workflow, PR-based release workflow)*
+*Last updated: editor-redesign branch — grid picker drag constraints, column/row clamping, preview scale reliability*
