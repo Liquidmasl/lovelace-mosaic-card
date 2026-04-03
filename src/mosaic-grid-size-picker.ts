@@ -253,7 +253,7 @@ export class MosaicGridSizePicker extends LitElement {
 
     // Dot grid: one dot per grid intersection, rendered as an SVG data URI so
     // dots stay crisp at any zoom level (no sub-pixel 1px line disappearing).
-    const dotR = 0.025; // radius of the dots in viewBox units (100×100)
+    const dotR = 0.1; // radius of the dots in viewBox units (100×100)
     const cellW = 100 / cols;
     const cellH = 100 / rows;
     // Build SVG in percentage-viewBox space (100×100) with one circle per intersection.

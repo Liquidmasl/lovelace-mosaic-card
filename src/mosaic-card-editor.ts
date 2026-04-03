@@ -19,6 +19,9 @@ interface CardGridOptions {
   row_start?: number;
   z_index?: number;
   styles?: CardStyles;
+  no_border?: boolean;
+  no_background?: boolean;
+  custom_css?: string;
   mobile?: {
     columns?: number;
     rows?: number;
@@ -98,15 +101,20 @@ interface LovelaceSectionConfig {
 @customElement("mosaic-card-editor")
 export class MosaicCardEditor extends LitElement {
   @property({ attribute: false }) public hass?: HassObj;
+  @property({ attribute: false }) public lovelace?: unknown;
   @property({ attribute: false }) public sectionConfig?: LovelaceSectionConfig;
 
   @state() private _config?: MosaicCardConfig;
   @state() private _guiMode = true;
   @state() private _yamlValue = "";
   @state() private _selectedCardIndex = 0;
+  @state() private _cardsEditorReady = false;
 
   private _previewRef: Ref<HTMLElement & { setConfig(c: unknown): void; hass: unknown }> = createRef();
   private _previewContainerRef: Ref<HTMLElement> = createRef();
+  private _stackEditorContainerRef: Ref<HTMLElement> = createRef();
+  private _stackEditor?: HTMLElement & { setConfig(c: unknown): void; hass?: unknown; lovelace?: unknown };
+  private _lastEditorCards = "[]";
   private _resizeObserver?: ResizeObserver;
   @state() private _previewScale = 1;
 
@@ -134,7 +142,7 @@ export class MosaicCardEditor extends LitElement {
     // and reconnects after the user switches away from the Config tab and back —
     // in that case _config may have changed while the editor was out of the DOM,
     // and updated() won't re-fire because _config didn't change on reconnect.
-    this.updateComplete.then(() => {
+    this.updateComplete.then(async () => {
       const container = this._previewContainerRef.value;
       if (container) {
         this._resizeObserver?.observe(container);
@@ -144,6 +152,59 @@ export class MosaicCardEditor extends LitElement {
       if (preview && this._config) {
         preview.setConfig(this._config);
         if (this.hass) preview.hass = this.hass;
+      }
+      // Load the vertical-stack card editor (same pattern as nested-lovelace-card).
+      // We use the full stack editor element — it contains hui-cards-editor internally
+      // and handles lovelace/hass forwarding to the card picker automatically.
+      if (!this._stackEditor) {
+        type VStackClass = { getConfigElement?(): Promise<HTMLElement & { setConfig(c: unknown): void; hass?: unknown; lovelace?: unknown }> };
+        let cls = customElements.get("hui-vertical-stack-card") as VStackClass | undefined;
+        if (!cls) {
+          const helpers = await (window as unknown as { loadCardHelpers?(): Promise<{ createCardElement(c: Record<string, unknown>): unknown }> }).loadCardHelpers?.();
+          if (helpers) {
+            helpers.createCardElement({ type: "vertical-stack", cards: [] });
+            await customElements.whenDefined("hui-vertical-stack-card");
+            cls = customElements.get("hui-vertical-stack-card") as VStackClass | undefined;
+          }
+        }
+        if (cls?.getConfigElement) {
+          const editor = await cls.getConfigElement();
+          editor.addEventListener("config-changed", (ev: Event) => {
+            const custom = ev as CustomEvent;
+            const cfg = (custom.detail as { config?: { type?: string; cards?: SubCardConfig[] } }).config;
+            if (cfg?.type !== "custom:mosaic-card") return;
+            custom.stopPropagation();
+            const newCards = cfg.cards ?? [];
+            const existingCards = this._config?.cards ?? [];
+            const merged = newCards.map((nc, i) => {
+              const g = existingCards[i]?.grid_options;
+              return g ? { ...nc, grid_options: g } : nc;
+            });
+            this._lastEditorCards = JSON.stringify(newCards);
+            this._fireConfigChanged({ ...this._config!, cards: merged });
+          });
+          this._stackEditor = editor;
+          if (this.hass) this._stackEditor.hass = this.hass;
+          if (this.lovelace) this._stackEditor.lovelace = this.lovelace;
+          const cardsToSend = (this._config?.cards ?? []).map(({ grid_options: _g, ...rest }) => rest);
+          this._lastEditorCards = JSON.stringify(cardsToSend);
+          this._stackEditor.setConfig({ type: "custom:mosaic-card", cards: cardsToSend });
+          this._cardsEditorReady = true;
+          await this.updateComplete;
+          const stackContainer = this._stackEditorContainerRef.value;
+          if (stackContainer) stackContainer.appendChild(this._stackEditor);
+        }
+      } else {
+        // Reconnect after tab switch: re-insert and sync state.
+        if (this.hass) this._stackEditor.hass = this.hass;
+        if (this.lovelace) this._stackEditor.lovelace = this.lovelace;
+        const cardsToSend = (this._config?.cards ?? []).map(({ grid_options: _g, ...rest }) => rest);
+        this._stackEditor.setConfig({ type: "custom:mosaic-card", cards: cardsToSend });
+        await this.updateComplete;
+        const stackContainer = this._stackEditorContainerRef.value;
+        if (stackContainer && !stackContainer.contains(this._stackEditor)) {
+          stackContainer.appendChild(this._stackEditor);
+        }
       }
     });
   }
@@ -183,6 +244,20 @@ export class MosaicCardEditor extends LitElement {
     if (changedProps.has("hass") && this.hass) {
       const preview = this._previewRef.value;
       if (preview) preview.hass = this.hass;
+      if (this._stackEditor) this._stackEditor.hass = this.hass;
+    }
+
+    if (changedProps.has("lovelace") && this._stackEditor) {
+      this._stackEditor.lovelace = this.lovelace;
+    }
+
+    if (changedProps.has("_config") && this._config && this._stackEditor) {
+      const cardsToSend = (this._config.cards ?? []).map(({ grid_options: _g, ...rest }) => rest);
+      const json = JSON.stringify(cardsToSend);
+      if (json !== this._lastEditorCards) {
+        this._lastEditorCards = json;
+        this._stackEditor.setConfig({ type: "custom:mosaic-card", cards: cardsToSend });
+      }
     }
   }
 
@@ -287,30 +362,6 @@ export class MosaicCardEditor extends LitElement {
     return deepGet(this._config as unknown as Record<string, unknown>, key);
   }
 
-  // ── Card list management ─────────────────────────────────────────────────────
-
-  private _moveCard(index: number, direction: -1 | 1): void {
-    if (!this._config?.cards) return;
-    const cards = [...this._config.cards];
-    const target = index + direction;
-    if (target < 0 || target >= cards.length) return;
-    [cards[index], cards[target]] = [cards[target], cards[index]];
-    this._fireConfigChanged({ ...this._config, cards });
-  }
-
-  private _deleteCard(index: number): void {
-    if (!this._config?.cards) return;
-    const cards = this._config.cards.filter((_, i) => i !== index);
-    this._fireConfigChanged({ ...this._config, cards });
-  }
-
-  private _pickCard(ev: CustomEvent): void {
-    const cardConfig = (ev.detail as { config: SubCardConfig }).config;
-    if (!cardConfig || !this._config) return;
-    const cards = [...(this._config.cards ?? []), cardConfig];
-    this._fireConfigChanged({ ...this._config, cards });
-  }
-
   // ── YAML mode ────────────────────────────────────────────────────────────────
 
   private _toggleGuiMode(): void {
@@ -383,7 +434,7 @@ export class MosaicCardEditor extends LitElement {
     return html`
       <div class="preview-area">
         <div class="card-sidebar">
-          ${cards.map((card, i) => this._renderSidebarItem(card, i, i === selected, cards.length))}
+          ${cards.map((card, i) => this._renderSidebarItem(card, i, i === selected))}
         </div>
         <div class="preview-container" style="max-width: ${naturalWidth}px" ${ref(this._previewContainerRef)}>
           <mosaic-card
@@ -407,14 +458,14 @@ export class MosaicCardEditor extends LitElement {
           ` : nothing}
         </div>
       </div>
+      ${this._renderSelectedCardSettings()}
       ${this._renderGridOptionsInfo()}
       ${this._renderModeAndGridSection(mode)}
-      ${this._renderCardsSection()}
-      ${this._renderAppearanceSection()}
+      ${this._renderCardsEditor()}
     `;
   }
 
-  private _renderSidebarItem(card: SubCardConfig, index: number, selected: boolean, total: number): TemplateResult {
+  private _renderSidebarItem(card: SubCardConfig, index: number, selected: boolean): TemplateResult {
     const displayName = (card.type ?? "unknown").replace(/^custom:/, "").replace(/-/g, " ");
     return html`
       <div class="sidebar-item ${selected ? "selected" : ""}" @click=${() => { this._selectedCardIndex = index; }}>
@@ -422,24 +473,6 @@ export class MosaicCardEditor extends LitElement {
           <div class="card-radio" aria-checked=${selected ? "true" : "false"}></div>
           <span class="sidebar-item-name">${displayName}</span>
         </div>
-        ${selected ? html`
-          <div class="sidebar-item-actions">
-            <ha-icon-button .label=${"Move up"}
-              .path=${"M7.41 15.41L12 10.83L16.59 15.41L18 14L12 8L6 14L7.41 15.41Z"}
-              ?disabled=${index === 0}
-              @click=${(e: Event) => { e.stopPropagation(); this._moveCard(index, -1); }}
-            ></ha-icon-button>
-            <ha-icon-button .label=${"Move down"}
-              .path=${"M7.41 8.59L12 13.17L16.59 8.59L18 10L12 16L6 10L7.41 8.59Z"}
-              ?disabled=${index === total - 1}
-              @click=${(e: Event) => { e.stopPropagation(); this._moveCard(index, 1); }}
-            ></ha-icon-button>
-            <ha-icon-button .label=${"Delete"}
-              .path=${"M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12L19 6.41Z"}
-              @click=${(e: Event) => { e.stopPropagation(); this._deleteCard(index); }}
-            ></ha-icon-button>
-          </div>
-        ` : nothing}
       </div>
     `;
   }
@@ -579,90 +612,73 @@ export class MosaicCardEditor extends LitElement {
     `;
   }
 
-  // ── Section: Cards ───────────────────────────────────────────────────────────
+  // ── Section: Selected card settings ─────────────────────────────────────────
 
-  private _renderCardsSection(): TemplateResult {
+  private _renderSelectedCardSettings(): TemplateResult {
     const cards = (this._get("cards") as SubCardConfig[]) ?? [];
-    const mode = (this._get("mode") as string) ?? "auto";
-    const gridColumns = this._getInternalGridColumns();
-    const gridRows = this._getInternalGridRows();
+    if (!cards.length) return html``;
     const selected = Math.min(this._selectedCardIndex, cards.length - 1);
     const selectedCard = cards[selected];
+    if (!selectedCard) return html``;
+    const g = (selectedCard.grid_options ?? {}) as CardGridOptions;
 
     return html`
       <div class="section">
-        <div class="section-title">Cards</div>
-
-        <div class="add-card">
-          <hui-card-picker
+        <div class="section-title">Selected card</div>
+        <div class="field inline-field">
+          <label>Remove border</label>
+          <ha-selector
             .hass=${this.hass}
-            @config-changed=${this._pickCard}
-          ></hui-card-picker>
+            .selector=${{ boolean: {} }}
+            .value=${g.no_border ?? false}
+            @value-changed=${(e: CustomEvent) => this._setCardGridOption(selected, "no_border", (e.detail as { value: boolean }).value)}
+          ></ha-selector>
         </div>
-
-        ${selectedCard
-          ? html`
-              <div class="grid-picker-section">
-                <div class="grid-picker-label">Grid layout for selected card</div>
-                <mosaic-grid-size-picker
-                  .mode=${mode as "auto" | "manual"}
-                  .gridColumns=${gridColumns}
-                  .gridRows=${gridRows}
-                  .value=${(selectedCard.grid_options ?? {}) as GridSizeValue}
-                  @value-changed=${(e: CustomEvent) => this._cardGridOptionsChanged(selected, e)}
-                ></mosaic-grid-size-picker>
-              </div>
-            `
-          : nothing}
+        <div class="field inline-field">
+          <label>Remove background</label>
+          <ha-selector
+            .hass=${this.hass}
+            .selector=${{ boolean: {} }}
+            .value=${g.no_background ?? false}
+            @value-changed=${(e: CustomEvent) => this._setCardGridOption(selected, "no_background", (e.detail as { value: boolean }).value)}
+          ></ha-selector>
+        </div>
+        <div class="field">
+          <label>Custom CSS</label>
+          <ha-selector
+            .hass=${this.hass}
+            .selector=${{ text: { type: "text" } }}
+            .value=${g.custom_css ?? ""}
+            @value-changed=${(e: CustomEvent) => this._setCardGridOption(selected, "custom_css", (e.detail as { value: string }).value)}
+          ></ha-selector>
+          <div class="helper-text">CSS declarations on the card wrapper (e.g. <code>opacity: 0.7</code>)</div>
+        </div>
       </div>
     `;
   }
 
-  private _cardGridOptionsChanged(index: number, e: CustomEvent): void {
-    e.stopPropagation();
-    const gridOptions = (e.detail as { value: GridSizeValue }).value;
+  private _setCardGridOption(index: number, key: string, value: unknown): void {
     if (!this._config?.cards) return;
     const cards = [...this._config.cards];
-    cards[index] = { ...cards[index], grid_options: gridOptions as CardGridOptions };
+    const g = { ...(cards[index].grid_options ?? {}), [key]: value } as CardGridOptions;
+    if (value === false || value === "") delete (g as Record<string, unknown>)[key];
+    cards[index] = { ...cards[index], grid_options: g };
     this._fireConfigChanged({ ...this._config, cards });
   }
 
+  // ── Section: Cards editor ────────────────────────────────────────────────────
 
-  // ── Section: Appearance ──────────────────────────────────────────────────────
-
-  private _renderAppearanceSection(): TemplateResult {
+  private _renderCardsEditor(): TemplateResult {
+    if (!this._cardsEditorReady) return html``;
     return html`
-      <ha-expansion-panel
-        .header=${"Appearance"}
-        outlined
-        class="appearance-section"
-      >
-        <div class="section-content">
-          <div class="field">
-            <label>Title</label>
-            <ha-selector
-              .hass=${this.hass}
-              .selector=${{ text: { type: "text" } }}
-              .value=${this._get("title") ?? ""}
-              .configValue=${"title"}
-              @value-changed=${this._valueChanged}
-            ></ha-selector>
-          </div>
-
-          <div class="field">
-            <label>Strip card borders</label>
-            <ha-selector
-              .hass=${this.hass}
-              .selector=${{ boolean: {} }}
-              .value=${this._get("strip_borders") ?? true}
-              .configValue=${"strip_borders"}
-              @value-changed=${this._valueChanged}
-            ></ha-selector>
-          </div>
-        </div>
-      </ha-expansion-panel>
+      <div class="section">
+        <div class="section-title">Cards</div>
+        <div ${ref(this._stackEditorContainerRef)}></div>
+      </div>
     `;
   }
+
+
 
   // ── Styles ───────────────────────────────────────────────────────────────────
 
@@ -763,19 +779,6 @@ export class MosaicCardEditor extends LitElement {
         min-width: 0;
       }
 
-      .sidebar-item-actions {
-        display: flex;
-        justify-content: space-between;
-        border-top: 1px solid var(--divider-color, #e0e0e0);
-        padding: 2px 0;
-      }
-
-      .sidebar-item-actions ha-icon-button {
-        --mdc-icon-button-size: 28px;
-        --mdc-icon-size: 14px;
-        flex: 1;
-      }
-
       .card-radio {
         width: 12px;
         height: 12px;
@@ -793,33 +796,14 @@ export class MosaicCardEditor extends LitElement {
 
       /* ── Preview container ── */
 
-      .grid-picker-section {
-        margin-top: 12px;
-        padding: 12px;
-        border: 1px solid var(--primary-color);
-        border-radius: 4px;
-        background: color-mix(in srgb, var(--primary-color) 5%, var(--card-background-color, #fff));
+      .inline-field {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
       }
 
-      .grid-picker-label {
-        font-size: 0.75rem;
-        color: var(--primary-color);
-        font-weight: 500;
-        margin-bottom: 8px;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-      }
-
-      .add-card {
-        margin-top: 8px;
-      }
-
-      .appearance-section {
-        margin-bottom: 16px;
-      }
-
-      .section-content {
-        padding: 8px 0;
+      .inline-field label {
+        margin-bottom: 0;
       }
 
       .preview-container {
