@@ -22,6 +22,12 @@ interface CardGridOptions {
   z_index?: number;
   /** Manual mode only: per-card CSS style overrides */
   styles?: CardStyles;
+  /** Remove the sub-card's border (box-shadow + border-radius + border). */
+  no_border?: boolean;
+  /** Remove the sub-card's background. */
+  no_background?: boolean;
+  /** Extra CSS declarations applied to the card wrapper element. */
+  custom_css?: string;
   /**
    * 12-column fallback layout used when the mosaic card is configured with
    * more than 12 columns. Mirrors the root fields but applies to narrower
@@ -163,6 +169,7 @@ export class MosaicCard extends LitElement {
         box-shadow: none !important;
         border-radius: 0 !important;
       }
+
     `;
   }
 
@@ -176,9 +183,9 @@ export class MosaicCard extends LitElement {
       this._config = config;
     }
 
-    if (config.grid_options) {
-      console.info("Mosaic card grid options from Layout tab:", config.grid_options);
-    }
+    // if (config.grid_options) {
+    //   console.info("Mosaic card grid options from Layout tab:", config.grid_options);
+    // }
 
     this._buildCardElements();
   }
@@ -309,6 +316,17 @@ export class MosaicCard extends LitElement {
       if (s.overflow !== undefined) parts.push(`overflow: ${s.overflow}`);
       if (s.opacity !== undefined) parts.push(`opacity: ${s.opacity}`);
     }
+
+    // CSS custom properties inherit through shadow DOM — the correct way to style ha-card internals.
+    if (opts.no_border) {
+      parts.push("--ha-card-box-shadow: none");
+      parts.push("--ha-card-border-width: 0px");
+      parts.push("--ha-card-border-radius: 0px");
+    }
+    if (opts.no_background) {
+      parts.push("--ha-card-background: transparent");
+    }
+    if (opts.custom_css) parts.push(opts.custom_css);
 
     return parts.join("; ");
   }
