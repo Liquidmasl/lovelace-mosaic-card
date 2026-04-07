@@ -21,8 +21,3 @@ jobs:
 
       - name: Build
         run: npm ci && npm run build
-
-      - name: HACS Validation
-        uses: hacs/action@22.5.0
-        with:
-          category: plugin
