@@ -11,7 +11,10 @@
     "test:e2e:up": "docker compose -f docker-compose.test.yml up -d --wait",
     "test:e2e:down": "docker compose -f docker-compose.test.yml down",
     "test:e2e": "npm run build --if-present && npm run test:e2e:up && npx playwright test; npm run test:e2e:down",
-    "test:e2e:smoke": "npm run test:e2e:up && npx playwright test smoke.spec.ts; npm run test:e2e:down"
+    "test:e2e:smoke": "npm run test:e2e:up && npx playwright test smoke.spec.ts; npm run test:e2e:down",
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts --fix",
+    "prepare": "husky"
   },
   "repository": {
     "type": "git",
@@ -24,9 +27,16 @@
     "@rollup/plugin-node-resolve": "^16.0.0",
     "@rollup/plugin-terser": "^0.4.4",
     "@rollup/plugin-typescript": "^12.1.0",
+    "eslint": "^10.2.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
     "rollup": "^4.28.0",
     "tslib": "^2.8.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.58.1"
+  },
+  "lint-staged": {
+    "src/**/*.ts": "eslint --fix"
   },
   "dependencies": {
     "lit": "^3.2.0",
