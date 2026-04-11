@@ -19,5 +19,13 @@ jobs:
           node-version: 20
           cache: npm
 
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
       - name: Build
-        run: npm ci && npm run build
+        run: npm run build
+
