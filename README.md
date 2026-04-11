@@ -1,11 +1,16 @@
+> [!WARNING]
+> **Work in Progress — Not production ready**
+>
+> This card is in active development. Expect bugs, breaking changes between releases, and missing features. It is publicly available for early testers and feedback, but **not recommended for production dashboards yet**. Use at your own risk.
+
 # Mosaic Card
 
-A custom [Home Assistant](https://www.home-assistant.io/) Lovelace card that arranges sub-cards in a CSS Grid mosaic layout.
+A custom [Home Assistant](https://www.home-assistant.io/) Lovelace card that arranges sub-cards in a CSS Grid mosaic layout with full visual editor support. Build arbitrary layouts with drag and drop. Easily disable card backgrounds or borders and add custom css.
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-![Mosaic Card Preview](docs/preview.svg)
+![Mosaic Card Preview](docs/editor.png)
 
 ## Features
 
