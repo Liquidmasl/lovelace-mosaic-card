@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.2] - 2026-04-11
+
+<!-- User-facing changes for the changelog. Delete this section for internal/CI-only changes. -->
+-
+
 ## [0.2.1] - 2026-04-07
 
 - Added README with installation instructions, configuration reference, and visual preview
@@ -11,4 +16,3 @@
 - Added card picker UI for adding sub-cards directly in the mosaic editor
 - Added sexy grid editor with live preview rendering
 - Improved grid layout: single position grid for all cards
-
