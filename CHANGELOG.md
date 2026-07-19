@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0] - 2026-07-19
+
+- Added **Row subdivision** option (1×/2×/4×) for finer vertical sizing: 56px, 28px or 14px grid rows
+- Editor preview now matches the card's real dashboard size and proportions
+- Fixed cards (e.g. mushroom chips) rendering blank in the editor preview
+- Editor preview is no longer accidentally interactive
+- Resize handles no longer block move-dragging of small cards
+
 ## [0.2.2] - 2026-04-11
 
 <!-- User-facing changes for the changelog. Delete this section for internal/CI-only changes. -->
