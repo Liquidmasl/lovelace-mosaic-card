@@ -49,6 +49,7 @@ interface MosaicCardConfig {
   column_gap?: number;
   row_gap?: number;
   auto_flow?: "dense" | "row" | "column";
+  row_subdivision?: 1 | 2 | 4;
   title?: string;
   strip_borders?: boolean;
   cards?: SubCardConfig[];
@@ -71,6 +72,21 @@ function deepGet(obj: Record<string, unknown>, path: string): unknown {
     }
     return undefined;
   }, obj);
+}
+
+/** Depth-first search for a selector across open shadow roots. */
+function findInShadow(root: ParentNode, selector: string, depth = 0): Element | undefined {
+  if (depth > 12) return undefined;
+  const direct = root.querySelector(selector);
+  if (direct) return direct;
+  for (const el of root.querySelectorAll("*")) {
+    const sr = (el as HTMLElement).shadowRoot;
+    if (sr) {
+      const found = findInShadow(sr, selector, depth + 1);
+      if (found) return found;
+    }
+  }
+  return undefined;
 }
 
 /** Return a shallow-copied object with the value at the given dot-path set. */
@@ -120,34 +136,67 @@ export class MosaicCardEditor extends LitElement {
 
   // ── Preview scaling ──────────────────────────────────────────────────────────
 
-  // Each column is 24px wide (HA section view column width).
+  private _liveSection?: Element;
+
+  /**
+   * Width the card actually has on the dashboard: live section width × the
+   * card's HA column span / 12. The dashboard stays rendered behind the edit
+   * dialog, so a hui-grid-section is normally there to measure. Falls back to
+   * 400px (typical section width) when none is found (e.g. masonry views).
+   */
   private _naturalPreviewWidth(): number {
-    const colGap = this._config?.column_gap ?? 8;
-    const cols = this._getInternalGridColumns();
-    return cols * 24 + (cols - 1) * colGap;
+    if (!this._liveSection?.isConnected) {
+      this._liveSection = findInShadow(document, "hui-grid-section");
+    }
+    const sectionW = this._liveSection?.getBoundingClientRect().width || 400;
+    const haCols = this._config?.grid_options?.columns;
+    const span = typeof haCols === "number" ? Math.min(12, Math.max(1, haCols)) : 12;
+    return Math.round(sectionW * (span / 12));
   }
 
   private _updatePreviewScale(): void {
     const container = this._previewContainerRef.value;
     if (!container) return;
     this._previewScale = Math.min(1, container.clientWidth / this._naturalPreviewWidth());
+    // The natural width follows the live section, which can resize without the
+    // container changing (viewport resize, sidebar toggle) — watch it too.
+    const section = this._liveSection;
+    if (section && section !== this._observedSection && this._resizeObserver) {
+      if (this._observedSection) this._resizeObserver.unobserve(this._observedSection);
+      this._resizeObserver.observe(section);
+      this._observedSection = section;
+    }
+  }
+
+  private _observedContainer?: Element;
+  private _observedSection?: Element;
+
+  /**
+   * Attach the ResizeObserver to the current preview container. The container
+   * ref can still be null when connectedCallback's updateComplete resolves
+   * (dialog lays out lazily), so this is re-checked on every updated() —
+   * observe() also fires the callback once, which self-corrects a stale scale.
+   */
+  private _ensureContainerObserved(): void {
+    const container = this._previewContainerRef.value;
+    if (!container || this._observedContainer === container) return;
+    this._resizeObserver ??= new ResizeObserver(() => this._updatePreviewScale());
+    if (this._observedContainer) this._resizeObserver.unobserve(this._observedContainer);
+    this._resizeObserver.observe(container);
+    this._observedContainer = container;
   }
 
   // ── HA lifecycle ────────────────────────────────────────────────────────────
 
   connectedCallback(): void {
     super.connectedCallback();
-    this._resizeObserver = new ResizeObserver(() => this._updatePreviewScale());
     // Re-initialize preview after DOM is ready. This handles both the initial mount
     // and reconnects after the user switches away from the Config tab and back —
     // in that case _config may have changed while the editor was out of the DOM,
     // and updated() won't re-fire because _config didn't change on reconnect.
     this.updateComplete.then(async () => {
-      const container = this._previewContainerRef.value;
-      if (container) {
-        this._resizeObserver?.observe(container);
-        this._updatePreviewScale();
-      }
+      this._ensureContainerObserved();
+      this._updatePreviewScale();
       const preview = this._previewRef.value;
       if (preview && this._config) {
         preview.setConfig(this._config);
@@ -212,6 +261,9 @@ export class MosaicCardEditor extends LitElement {
   disconnectedCallback(): void {
     super.disconnectedCallback();
     this._resizeObserver?.disconnect();
+    this._resizeObserver = undefined;
+    this._observedContainer = undefined;
+    this._observedSection = undefined;
   }
 
   protected firstUpdated(): void {
@@ -220,6 +272,8 @@ export class MosaicCardEditor extends LitElement {
 
   protected updated(changedProps: PropertyValues): void {
     super.updated(changedProps);
+
+    this._ensureContainerObserved();
 
     if (changedProps.has("_config") && this._config) {
       // If column count shrank, clamp sub-cards that now extend outside the grid.
@@ -315,7 +369,23 @@ export class MosaicCardEditor extends LitElement {
   private _getInternalGridRows(): number {
     const gridRows = this._config?.grid_options?.rows;
     if (typeof gridRows === "number") return gridRows;
-    return this._config?.rows ?? 4;
+    // Fallback must match mosaic-card's own default (8) or the picker overlay
+    // and the preview underneath it disagree about row geometry.
+    return this._config?.rows ?? 8;
+  }
+
+  private _getRowSubdivision(): number {
+    const sub = this._config?.row_subdivision;
+    return sub === 2 || sub === 4 ? sub : 1;
+  }
+
+  private _subdivisionChanged(ev: CustomEvent): void {
+    ev.stopPropagation();
+    const sub = Number((ev.detail as { value: string }).value);
+    this._fireConfigChanged({
+      ...this._config!,
+      row_subdivision: (sub === 2 || sub === 4 ? sub : 1) as 1 | 2 | 4,
+    });
   }
 
   private _rowsChanged(ev: CustomEvent): void {
@@ -438,6 +508,7 @@ export class MosaicCardEditor extends LitElement {
         </div>
         <div class="preview-container" style="max-width: ${naturalWidth}px" ${ref(this._previewContainerRef)}>
           <mosaic-card
+            inert
             ${ref(this._previewRef)}
             style="width: ${naturalWidth}px; zoom: ${scale};"
           ></mosaic-card>
@@ -536,7 +607,7 @@ export class MosaicCardEditor extends LitElement {
             .selector=${{
               number: {
                 min: 1,
-                max: 32,
+                max: 32 * this._getRowSubdivision(),
                 mode: "slider",
                 step: 1,
               },
@@ -545,6 +616,26 @@ export class MosaicCardEditor extends LitElement {
             @value-changed=${(e: CustomEvent) => this._rowsChanged(e)}
           ></ha-selector>
           <div class="helper-text">Number of rows in the mosaic grid</div>
+        </div>
+
+        <div class="field">
+          <label>Row subdivision</label>
+          <ha-selector
+            .hass=${this.hass}
+            .selector=${{
+              select: {
+                options: [
+                  { value: "1", label: "1× (56 px rows)" },
+                  { value: "2", label: "2× (28 px rows)" },
+                  { value: "4", label: "4× (14 px rows)" },
+                ],
+                mode: "list",
+              },
+            }}
+            .value=${String(this._getRowSubdivision())}
+            @value-changed=${(e: CustomEvent) => this._subdivisionChanged(e)}
+          ></ha-selector>
+          <div class="helper-text">Splits the standard row into finer units for more precise vertical sizing</div>
         </div>
 
         <div class="field">
