@@ -70,6 +70,11 @@ interface MosaicCardConfig {
    * Controls CSS grid-auto-flow. Default "dense".
    */
   auto_flow?: "dense" | "row" | "column";
+  /**
+   * Row subdivision factor. Splits the standard 56px HA row into finer units:
+   * 1 → 56px rows, 2 → 28px rows, 4 → 14px rows. Default 1.
+   */
+  row_subdivision?: 1 | 2 | 4;
   /** Title displayed above the grid. */
   title?: string;
   /** Strip card borders from sub-cards. Default true. */
@@ -101,6 +106,8 @@ interface HACardElement extends HTMLElement {
   hass?: unknown;
   getCardSize?(): number;
   getGridOptions?(): HAGridOptions;
+  /** LitElement method — absent until the custom element definition loads. */
+  requestUpdate?(): void;
 }
 
 interface CardHelpers {
@@ -136,8 +143,6 @@ export class MosaicCard extends LitElement {
     return css`
       :host {
         display: block;
-        --row-height: 56px;
-        --row-gap: 8px;
       }
 
       .mosaic-grid {
@@ -193,8 +198,13 @@ export class MosaicCard extends LitElement {
   protected updated(changedProperties: PropertyValues): void {
     // Forward hass to all child card elements whenever it changes.
     if (changedProperties.has("hass") && this.hass !== undefined) {
+      const firstHass = changedProperties.get("hass") === undefined;
       for (const el of this._cardElements) {
         el.hass = this.hass;
+        // Some cards have a non-reactive hass setter (e.g. mushroom-chips-card)
+        // and stay blank forever if their first render ran without hass —
+        // force one update when hass first arrives.
+        if (firstHass) el.requestUpdate?.();
       }
     }
   }
@@ -214,17 +224,42 @@ export class MosaicCard extends LitElement {
       return;
     }
 
-    const elements: HACardElement[] = cards.map((cardConfig) => {
-      // Strip our own grid_options before passing config to the sub-card.
-      const { grid_options: _stripped, ...subConfig } = cardConfig;
-      const el = helpers.createCardElement(subConfig as Record<string, unknown>);
-      if (this.hass !== undefined) {
-        el.hass = this.hass;
-      }
-      return el;
-    });
+    const elements: HACardElement[] = cards.map((cardConfig) =>
+      this._createCardElement(helpers, cardConfig),
+    );
 
     this._cardElements = elements;
+  }
+
+  private _createCardElement(
+    helpers: CardHelpers,
+    cardConfig: SubCardConfig,
+  ): HACardElement {
+    // Strip our own grid_options before passing config to the sub-card.
+    const { grid_options: _stripped, ...subConfig } = cardConfig;
+    const el = helpers.createCardElement(subConfig as Record<string, unknown>);
+    if (this.hass !== undefined) {
+      el.hass = this.hass;
+      // createCardElement calls setConfig before we can deliver hass; cards
+      // with a non-reactive hass setter would otherwise first-render blank.
+      el.requestUpdate?.();
+    }
+    // HA fires ll-rebuild on an element when its (lazily loaded) custom element
+    // definition arrives after creation, or when the card wants to be recreated.
+    // Containers must recreate the child, or cards created before their JS
+    // loaded stay permanently blank (e.g. mushroom cards in the editor preview).
+    el.addEventListener("ll-rebuild", (ev) => {
+      ev.stopPropagation();
+      const index = this._cardElements.indexOf(el);
+      if (index === -1) return;
+      const replacement = this._createCardElement(helpers, cardConfig);
+      this._cardElements = [
+        ...this._cardElements.slice(0, index),
+        replacement,
+        ...this._cardElements.slice(index + 1),
+      ];
+    });
+    return el;
   }
 
   // ── Grid style helpers ──────────────────────────────────────────────────────
@@ -257,7 +292,9 @@ export class MosaicCard extends LitElement {
   private _containerStyle(): string {
     const cfg = this._config!;
     const mode = cfg.mode ?? "auto";
-    const rows = cfg.grid_options?.rows ?? cfg.rows ?? 8;
+    // grid_options.rows can be "auto" (HA Layout tab) — only numeric values are usable.
+    const gridRows = cfg.grid_options?.rows;
+    const rows = typeof gridRows === "number" ? gridRows : cfg.rows ?? 8;
     const colGap = cfg.column_gap ?? 8;
     const rowGap = cfg.row_gap ?? 8;
 
@@ -272,10 +309,17 @@ export class MosaicCard extends LitElement {
       columns = 12;
     }
 
+    // Row subdivision: split the standard 56px HA row into 2 or 4 finer units.
+    const sub = cfg.row_subdivision === 2 || cfg.row_subdivision === 4 ? cfg.row_subdivision : 1;
+    const baseRowHeight = 56 / sub;
+    // Compensate for non-default gaps and distribute the missing trailing gap
+    // across rows so the grid's total height stays aligned with HA's section grid.
+    const rowSize = Math.max(0, baseRowHeight - (rowGap - 8) + rowGap / rows);
+
     const parts = [
       `grid-template-columns: repeat(${columns}, 1fr)`,
       `gap: ${rowGap}px ${colGap}px`,
-      `grid-template-rows: repeat(${rows}, calc(var(--row-height) - (${rowGap}px - var(--row-gap)) + ${rowGap}px / ${rows}))`,
+      `grid-template-rows: repeat(${rows}, ${rowSize.toFixed(3)}px)`,
     ];
 
     if (mode === "auto") {
