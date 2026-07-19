@@ -557,14 +557,36 @@ export class MosaicGridSizePicker extends LitElement {
         touch-action: none;
       }
 
-      /* Increase touch target size without affecting visual size */
+      /*
+       * Increase touch target size without affecting visual size.
+       * The expansion is directional: large on the outward side (beyond the card
+       * edge, where nothing competes), minimal inward so small cards keep a
+       * grabbable body for move-dragging.
+       */
       .handle::before {
         content: "";
         position: absolute;
-        top: -15px;
-        left: -15px;
-        right: -15px;
+        inset: -10px;
+      }
+
+      .handle.s::before {
+        top: -4px;
         bottom: -15px;
+      }
+
+      .handle.n::before {
+        top: -15px;
+        bottom: -4px;
+      }
+
+      .handle.e::before {
+        left: -4px;
+        right: -15px;
+      }
+
+      .handle.w::before {
+        left: -15px;
+        right: -4px;
       }
 
       .handle.s {

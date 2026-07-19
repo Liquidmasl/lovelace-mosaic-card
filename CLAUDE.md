@@ -216,6 +216,26 @@ When a topic needs more detail than a few bullets, create a dedicated file under
 
 - [`.claude/test-infrastructure.md`](.claude/test-infrastructure.md) — Full test infra: container setup, auth pattern, shadow DOM path, Playwright helpers, selector table, demo entity IDs, REST API examples, timing quirks
 
+### Sub-card element lifecycle (non-obvious, cost a full debug session)
+
+- **`ll-rebuild` contract**: `helpers.createCardElement()` fires `ll-rebuild` on the element when its lazily-loaded custom element definition arrives after creation. Containers MUST listen and recreate the child (mosaic-card does, in `_createCardElement`) or cards whose JS loads late stay permanently blank.
+- **Non-reactive `hass` setters**: mushroom-chips-card (and possibly others) defines `set hass()` with no getter and no `requestUpdate()`. If its first lit render runs before hass is delivered, it renders `nothing` and a later hass assignment never repaints it. HA's `hui-card` avoids this by setting hass *before* config; `createCardElement` calls setConfig internally so we can't. Fix: call `el.requestUpdate?.()` after the initial hass delivery (at creation + on first hass change in `updated()`). Do NOT requestUpdate on every hass change — that forces full re-renders every state tick.
+- Reading `el.hass` to check if hass was delivered is unreliable (setter-only property reads `undefined`); check `el._hass` when debugging.
+
+### Editor preview scaling (current design)
+
+- `_naturalPreviewWidth()` = the card's **real dashboard width**: live `hui-grid-section` width (measured through shadow DOM — the dashboard stays rendered behind the edit dialog) × `grid_options.columns / 12`; falls back to 400px if no section is found. The preview renders at that width with `zoom = min(1, container/natural)` and the container is capped by `max-width` — so it matches the dashboard 1:1 when the pane is wide enough and shrinks proportionally when not.
+- **ResizeObserver attachment must be self-healing**: the container ref can still be null when `connectedCallback`'s `updateComplete` resolves (ha-dialog lays out lazily) → `_ensureContainerObserved()` re-checks on every `updated()`. The observer also watches the live section element, because section width changes (viewport resize, sidebar toggle) without any container resize and would otherwise leave a stale scale.
+- Preview `mosaic-card` carries the `inert` attribute — `pointer-events: none` alone is NOT enough, sub-cards that set pointer-events internally punch through it.
+- Editor's rows fallback must equal mosaic-card's fallback (8), or the picker overlay geometry disagrees with the preview grid.
+
+### Deploying a dev build to Marcel's live HA (fast loop, preferred over test container)
+
+- SSH host `homeassistant` (192.168.0.45, root) — card lives at `/homeassistant/www/community/lovelace-mosaic-card/mosaic-card.js`
+- **Must also regenerate `mosaic-card.js.gz`** next to it (`gzip -9 -kf`) — HA serves the stale .gz otherwise
+- Cache-bust in browser: `fetch(resourceUrl, {cache:"reload"})` then `location.reload()` — resource URL has a `?hacstag=` query, normal reload serves from cache
+- There is a dead Lovelace resource `http://192.168.0.10:5173/mosaic-card.js` (old Vite dev workflow) and a stray `/local/mosaic-carddd.js` — both fail to load and are harmless today, but the 5173 one will shadow the HACS resource if anything ever serves that port
+
 ### Grid picker drag constraints (mosaic-grid-size-picker.ts)
 
 Each drag handle must keep the card inside the grid:
