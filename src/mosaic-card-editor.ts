@@ -1,6 +1,7 @@
 import { LitElement, html, css, CSSResultGroup, TemplateResult, nothing, PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { createRef, ref, Ref } from "lit/directives/ref.js";
+import { keyed } from "lit/directives/keyed.js";
 import type { GridSizeValue } from "./mosaic-grid-size-picker";
 import "./mosaic-grid-size-picker";
 
@@ -39,32 +40,12 @@ interface SubCardConfig {
 }
 
 /**
- * Sub-card fields the mosaic card owns and edits itself. They are hidden from
- * the borrowed stack editor, which rebuilds configs from its own GUI editors
- * and would otherwise drop them, and restored on the way back by index.
+ * Grid footprint given to a freshly picked card. Without it _resolveGridOptions
+ * falls back to 2×1, which lands new cards as unreadable slivers.
  */
-const MOSAIC_OWNED_FIELDS = ["grid_options", "visibility"] as const;
-
-function stripOwnedFields(cards: SubCardConfig[]): SubCardConfig[] {
-  return cards.map((card) => {
-    const rest = { ...card };
-    for (const key of MOSAIC_OWNED_FIELDS) delete rest[key];
-    return rest;
-  });
-}
-
-function restoreOwnedFields(
-  cards: SubCardConfig[],
-  previous: SubCardConfig[],
-): SubCardConfig[] {
-  return cards.map((card, i) => {
-    const merged: Record<string, unknown> = { ...card };
-    for (const key of MOSAIC_OWNED_FIELDS) {
-      const value = previous[i]?.[key];
-      if (value !== undefined) merged[key] = value;
-    }
-    return merged as SubCardConfig;
-  });
+function defaultGridOptions(mode: string): CardGridOptions {
+  const base: CardGridOptions = { columns: 4, rows: 2 };
+  return mode === "manual" ? { ...base, column_start: 1, row_start: 1 } : base;
 }
 
 interface HAGridOptions {
@@ -138,6 +119,14 @@ function deepSet(
   };
 }
 
+declare global {
+  interface Window {
+    loadCardHelpers?(): Promise<{
+      createCardElement(config: Record<string, unknown>): HTMLElement;
+    }>;
+  }
+}
+
 // ── Editor component ─────────────────────────────────────────────────────────
 
 interface LovelaceSectionConfig {
@@ -155,8 +144,13 @@ export class MosaicCardEditor extends LitElement {
   @state() private _guiMode = true;
   @state() private _yamlValue = "";
   @state() private _selectedCardIndex = 0;
-  @state() private _cardsEditorReady = false;
-  @state() private _visibilityEditorReady = false;
+  /** Card picker replaces the card editor while adding. */
+  @state() private _addingCard = false;
+  @state() private _cardEditorReady = false;
+  @state() private _pickerReady = false;
+  /** GUI/YAML state of the embedded per-card editor, mirroring HA's stack editor. */
+  @state() private _cardGuiMode = true;
+  @state() private _cardGuiModeAvailable = true;
   /**
    * When false (default) the preview runs in HA's preview mode: visibility
    * conditions are ignored so every card stays visible and positionable.
@@ -166,10 +160,14 @@ export class MosaicCardEditor extends LitElement {
 
   private _previewRef: Ref<HTMLElement & { setConfig(c: unknown): void; hass: unknown }> = createRef();
   private _previewContainerRef: Ref<HTMLElement> = createRef();
-  private _stackEditorContainerRef: Ref<HTMLElement> = createRef();
-  private _stackEditor?: HTMLElement & { setConfig(c: unknown): void; hass?: unknown; lovelace?: unknown };
-  private _lastEditorCards = "[]";
   private _resizeObserver?: ResizeObserver;
+  /**
+   * Stable per-(index, length) keys for keyed() around hui-card-element-editor.
+   * Without recreating that element on selection change it keeps the previously
+   * selected card's internal state (config element, GUI/YAML mode, errors).
+   */
+  private _editorKeys = new Map<string, string>();
+  private _pickerLoading = false;
   @state() private _previewScale = 1;
 
   // ── Preview scaling ──────────────────────────────────────────────────────────
@@ -225,20 +223,51 @@ export class MosaicCardEditor extends LitElement {
   }
 
   /**
-   * hui-card-visibility-editor is HA's own Visibility tab UI (status line +
-   * ha-card-conditions-editor). It ships in the same chunk as
-   * hui-dialog-edit-card, which is by definition loaded — this editor only ever
-   * renders inside that dialog — so this resolves immediately in practice.
+   * hui-card-element-editor ships in the same chunk as hui-dialog-edit-card,
+   * and this editor only ever renders inside that dialog — so it is already
+   * defined and this never actually waits.
    */
-  private _ensureVisibilityEditor(): void {
-    if (this._visibilityEditorReady) return;
-    if (customElements.get("hui-card-visibility-editor")) {
-      this._visibilityEditorReady = true;
+  private _ensureCardEditor(): void {
+    if (this._cardEditorReady) return;
+    if (customElements.get("hui-card-element-editor")) {
+      this._cardEditorReady = true;
       return;
     }
-    customElements.whenDefined("hui-card-visibility-editor").then(() => {
-      this._visibilityEditorReady = true;
+    customElements.whenDefined("hui-card-element-editor").then(() => {
+      this._cardEditorReady = true;
     });
+  }
+
+  /**
+   * hui-card-picker is NOT in the edit-card chunk — it ships with the *create*
+   * card dialog, so it is normally undefined here and whenDefined() alone would
+   * wait forever. hui-stack-card-editor imports it, so instantiating the
+   * vertical-stack config element pulls the chunk in; the element itself is
+   * discarded, we only want the side effect of its imports being evaluated.
+   * Deferred until the picker is actually needed so we don't pay for it on open.
+   */
+  private async _ensureCardPicker(): Promise<void> {
+    if (this._pickerReady || this._pickerLoading) return;
+    if (customElements.get("hui-card-picker")) {
+      this._pickerReady = true;
+      return;
+    }
+    this._pickerLoading = true;
+    try {
+      type StackClass = { getConfigElement?(): Promise<HTMLElement> };
+      let cls = customElements.get("hui-vertical-stack-card") as StackClass | undefined;
+      if (!cls) {
+        const helpers = await window.loadCardHelpers?.();
+        helpers?.createCardElement({ type: "vertical-stack", cards: [] });
+        await customElements.whenDefined("hui-vertical-stack-card");
+        cls = customElements.get("hui-vertical-stack-card") as StackClass | undefined;
+      }
+      await cls?.getConfigElement?.();
+      await customElements.whenDefined("hui-card-picker");
+      this._pickerReady = true;
+    } finally {
+      this._pickerLoading = false;
+    }
   }
 
   // ── HA lifecycle ────────────────────────────────────────────────────────────
@@ -249,63 +278,15 @@ export class MosaicCardEditor extends LitElement {
     // and reconnects after the user switches away from the Config tab and back —
     // in that case _config may have changed while the editor was out of the DOM,
     // and updated() won't re-fire because _config didn't change on reconnect.
-    this.updateComplete.then(async () => {
+    this.updateComplete.then(() => {
       this._ensureContainerObserved();
       this._updatePreviewScale();
-      this._ensureVisibilityEditor();
+      this._ensureCardEditor();
+      if (!this._cards.length) this._ensureCardPicker();
       const preview = this._previewRef.value;
       if (preview && this._config) {
         preview.setConfig(this._config);
         if (this.hass) preview.hass = this.hass;
-      }
-      // Load the vertical-stack card editor (same pattern as nested-lovelace-card).
-      // We use the full stack editor element — it contains hui-cards-editor internally
-      // and handles lovelace/hass forwarding to the card picker automatically.
-      if (!this._stackEditor) {
-        type VStackClass = { getConfigElement?(): Promise<HTMLElement & { setConfig(c: unknown): void; hass?: unknown; lovelace?: unknown }> };
-        let cls = customElements.get("hui-vertical-stack-card") as VStackClass | undefined;
-        if (!cls) {
-          const helpers = await (window as unknown as { loadCardHelpers?(): Promise<{ createCardElement(c: Record<string, unknown>): unknown }> }).loadCardHelpers?.();
-          if (helpers) {
-            helpers.createCardElement({ type: "vertical-stack", cards: [] });
-            await customElements.whenDefined("hui-vertical-stack-card");
-            cls = customElements.get("hui-vertical-stack-card") as VStackClass | undefined;
-          }
-        }
-        if (cls?.getConfigElement) {
-          const editor = await cls.getConfigElement();
-          editor.addEventListener("config-changed", (ev: Event) => {
-            const custom = ev as CustomEvent;
-            const cfg = (custom.detail as { config?: { type?: string; cards?: SubCardConfig[] } }).config;
-            if (cfg?.type !== "custom:mosaic-card") return;
-            custom.stopPropagation();
-            const newCards = cfg.cards ?? [];
-            const merged = restoreOwnedFields(newCards, this._config?.cards ?? []);
-            this._lastEditorCards = JSON.stringify(newCards);
-            this._fireConfigChanged({ ...this._config!, cards: merged });
-          });
-          this._stackEditor = editor;
-          if (this.hass) this._stackEditor.hass = this.hass;
-          if (this.lovelace) this._stackEditor.lovelace = this.lovelace;
-          const cardsToSend = stripOwnedFields(this._config?.cards ?? []);
-          this._lastEditorCards = JSON.stringify(cardsToSend);
-          this._stackEditor.setConfig({ type: "custom:mosaic-card", cards: cardsToSend });
-          this._cardsEditorReady = true;
-          await this.updateComplete;
-          const stackContainer = this._stackEditorContainerRef.value;
-          if (stackContainer) stackContainer.appendChild(this._stackEditor);
-        }
-      } else {
-        // Reconnect after tab switch: re-insert and sync state.
-        if (this.hass) this._stackEditor.hass = this.hass;
-        if (this.lovelace) this._stackEditor.lovelace = this.lovelace;
-        const cardsToSend = stripOwnedFields(this._config?.cards ?? []);
-        this._stackEditor.setConfig({ type: "custom:mosaic-card", cards: cardsToSend });
-        await this.updateComplete;
-        const stackContainer = this._stackEditorContainerRef.value;
-        if (stackContainer && !stackContainer.contains(this._stackEditor)) {
-          stackContainer.appendChild(this._stackEditor);
-        }
       }
     });
   }
@@ -350,20 +331,6 @@ export class MosaicCardEditor extends LitElement {
     if (changedProps.has("hass") && this.hass) {
       const preview = this._previewRef.value;
       if (preview) preview.hass = this.hass;
-      if (this._stackEditor) this._stackEditor.hass = this.hass;
-    }
-
-    if (changedProps.has("lovelace") && this._stackEditor) {
-      this._stackEditor.lovelace = this.lovelace;
-    }
-
-    if (changedProps.has("_config") && this._config && this._stackEditor) {
-      const cardsToSend = stripOwnedFields(this._config?.cards ?? []);
-      const json = JSON.stringify(cardsToSend);
-      if (json !== this._lastEditorCards) {
-        this._lastEditorCards = json;
-        this._stackEditor.setConfig({ type: "custom:mosaic-card", cards: cardsToSend });
-      }
     }
   }
 
@@ -557,7 +524,13 @@ export class MosaicCardEditor extends LitElement {
       ${this._renderVisibilityToggle(cards)}
       <div class="preview-area">
         <div class="card-sidebar">
-          ${cards.map((card, i) => this._renderSidebarItem(card, i, i === selected))}
+          ${cards.map((card, i) => this._renderSidebarItem(card, i, i === selected && !this._addingCard))}
+          <button
+            class="sidebar-add ${this._addingCard ? "selected" : ""}"
+            @click=${() => { this._addingCard = true; this._ensureCardPicker(); }}
+          >
+            + Add card
+          </button>
         </div>
         <div class="preview-container" style="max-width: ${naturalWidth}px" ${ref(this._previewContainerRef)}>
           <mosaic-card
@@ -618,7 +591,7 @@ export class MosaicCardEditor extends LitElement {
   private _renderSidebarItem(card: SubCardConfig, index: number, selected: boolean): TemplateResult {
     const displayName = (card.type ?? "unknown").replace(/^custom:/, "").replace(/-/g, " ");
     return html`
-      <div class="sidebar-item ${selected ? "selected" : ""}" @click=${() => { this._selectedCardIndex = index; }}>
+      <div class="sidebar-item ${selected ? "selected" : ""}" @click=${() => this._selectCard(index)}>
         <div class="sidebar-item-main">
           <div class="card-radio" aria-checked=${selected ? "true" : "false"}></div>
           <span class="sidebar-item-name">${displayName}</span>
@@ -831,36 +804,79 @@ export class MosaicCardEditor extends LitElement {
           <div class="helper-text">CSS declarations on the card wrapper (e.g. <code>opacity: 0.7</code>)</div>
         </div>
       </div>
-      ${this._renderVisibilitySection(selected, selectedCard)}
     `;
   }
 
+  // ── Card list mutations ─────────────────────────────────────────────────────
+
+  private get _cards(): SubCardConfig[] {
+    return this._config?.cards ?? [];
+  }
+
+  private _commitCards(cards: SubCardConfig[]): void {
+    this._fireConfigChanged({ ...this._config!, cards });
+  }
+
+  private _handleCardPicked(ev: CustomEvent): void {
+    ev.stopPropagation();
+    const picked = (ev.detail as { config: SubCardConfig }).config;
+    const mode = (this._get("mode") as string) ?? "auto";
+    const cards = [
+      ...this._cards,
+      { ...picked, grid_options: defaultGridOptions(mode) },
+    ];
+    this._addingCard = false;
+    this._selectedCardIndex = cards.length - 1;
+    this._cardGuiMode = true;
+    this._cardGuiModeAvailable = true;
+    this._commitCards(cards);
+  }
+
   /**
-   * HA's own Visibility tab UI, borrowed wholesale. It takes the full sub-card
-   * config and hands back a copy with `visibility` set (or removed when the
-   * user deletes the last condition), so we just swap the card in place.
+   * Reorder carries the whole card object, so grid_options and visibility move
+   * with the card rather than staying bound to the slot.
    */
-  private _renderVisibilitySection(index: number, card: SubCardConfig): TemplateResult {
-    if (!this._visibilityEditorReady) return html``;
-    return html`
-      <div class="section">
-        <div class="section-title">Visibility</div>
-        <div class="helper-text">
-          The card is shown when ALL conditions below are met. Leave empty to always show it.
-        </div>
-        <hui-card-visibility-editor
-          .hass=${this.hass}
-          .config=${card}
-          .entityId=${typeof card.entity === "string" ? card.entity : undefined}
-          @value-changed=${(e: CustomEvent) => {
-            e.stopPropagation();
-            const updated = [...(this._config?.cards ?? [])];
-            updated[index] = (e.detail as { value: SubCardConfig }).value;
-            this._fireConfigChanged({ ...this._config!, cards: updated });
-          }}
-        ></hui-card-visibility-editor>
-      </div>
-    `;
+  private _moveCard(from: number, to: number): void {
+    const cards = [...this._cards];
+    if (to < 0 || to >= cards.length) return;
+    const [moved] = cards.splice(from, 1);
+    cards.splice(to, 0, moved);
+    this._selectedCardIndex = to;
+    this._commitCards(cards);
+  }
+
+  private _duplicateCard(index: number): void {
+    const cards = [...this._cards];
+    cards.splice(index + 1, 0, structuredClone(cards[index]));
+    this._selectedCardIndex = index + 1;
+    this._commitCards(cards);
+  }
+
+  private _deleteCard(index: number): void {
+    const cards = this._cards.filter((_, i) => i !== index);
+    this._selectedCardIndex = Math.max(0, Math.min(index, cards.length - 1));
+    this._commitCards(cards);
+  }
+
+  private _selectCard(index: number): void {
+    if (this._selectedCardIndex === index && !this._addingCard) return;
+    this._selectedCardIndex = index;
+    this._addingCard = false;
+    // A fresh editor element starts in GUI mode; keep our toolbar in sync.
+    this._cardGuiMode = true;
+    this._cardGuiModeAvailable = true;
+  }
+
+  /**
+   * Keys must be stable per (index, length) so the editor is recreated when the
+   * selection or the list shape changes, but not on every keystroke.
+   */
+  private _editorKey(index: number, length: number): string {
+    const id = `${index}-${length}`;
+    if (!this._editorKeys.has(id)) {
+      this._editorKeys.set(id, Math.random().toString(36).slice(2));
+    }
+    return this._editorKeys.get(id)!;
   }
 
   private _setCardGridOption(index: number, key: string, value: unknown): void {
@@ -874,14 +890,113 @@ export class MosaicCardEditor extends LitElement {
 
   // ── Section: Cards editor ────────────────────────────────────────────────────
 
+  /**
+   * The card editor, composed from the same two HA elements that HA's own stack
+   * editor uses — hui-card-picker to add, hui-card-element-editor to edit —
+   * but driven by the sidebar selection that also drives the position grid, so
+   * there is a single card list instead of two competing ones.
+   *
+   * sectionConfig is deliberately NOT passed to the element editor: that would
+   * add HA's Layout tab, which edits grid_options against a section grid and
+   * would fight our own position picker.
+   */
   private _renderCardsEditor(): TemplateResult {
-    if (!this._cardsEditorReady) return html``;
+    const cards = this._cards;
+    const selected = Math.min(this._selectedCardIndex, cards.length - 1);
+    const showPicker = this._addingCard || !cards.length;
+    if (!showPicker && !this._cardEditorReady) return html``;
+
     return html`
       <div class="section">
-        <div class="section-title">Cards</div>
-        <div ${ref(this._stackEditorContainerRef)}></div>
+        <div class="section-title">${showPicker ? "Add card" : "Card"}</div>
+        ${showPicker
+          ? html`
+              ${cards.length
+                ? html`<div class="card-editor-toolbar">
+                    <ha-button @click=${() => { this._addingCard = false; }}>Cancel</ha-button>
+                  </div>`
+                : nothing}
+              ${this._pickerReady
+                ? html`<hui-card-picker
+                    .hass=${this.hass}
+                    .lovelace=${this.lovelace}
+                    @config-changed=${this._handleCardPicked}
+                  ></hui-card-picker>`
+                : html`<div class="helper-text">Loading card picker…</div>`}
+            `
+          : html`
+              <div class="card-editor-toolbar">
+                <ha-icon-button
+                  .label=${this._cardGuiMode ? "Edit as YAML" : "Edit in GUI"}
+                  .disabled=${!this._cardGuiModeAvailable}
+                  .path=${"M14.6 16.6L19.2 12L14.6 7.4L16 6L22 12L16 18L14.6 16.6M9.4 16.6L4.8 12L9.4 7.4L8 6L2 12L8 18L9.4 16.6Z"}
+                  @click=${this._toggleCardMode}
+                ></ha-icon-button>
+                <span class="spacer"></span>
+                <ha-icon-button
+                  label="Move up"
+                  .disabled=${selected === 0}
+                  .path=${"M7.41,15.41L12,10.83L16.59,15.41L18,14L12,8L6,14L7.41,15.41Z"}
+                  @click=${() => this._moveCard(selected, selected - 1)}
+                ></ha-icon-button>
+                <ha-icon-button
+                  label="Move down"
+                  .disabled=${selected === cards.length - 1}
+                  .path=${"M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"}
+                  @click=${() => this._moveCard(selected, selected + 1)}
+                ></ha-icon-button>
+                <ha-icon-button
+                  label="Duplicate"
+                  .path=${"M19,21H8V7H19M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5M16,1H4A2,2 0 0,0 2,3V17H4V3H16V1Z"}
+                  @click=${() => this._duplicateCard(selected)}
+                ></ha-icon-button>
+                <ha-icon-button
+                  label="Delete"
+                  .path=${"M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z"}
+                  @click=${() => this._deleteCard(selected)}
+                ></ha-icon-button>
+              </div>
+              ${keyed(
+                this._editorKey(selected, cards.length),
+                html`<hui-card-element-editor
+                  .hass=${this.hass}
+                  .lovelace=${this.lovelace}
+                  .value=${cards[selected]}
+                  show-visibility-tab
+                  @config-changed=${this._handleCardConfigChanged}
+                  @GUImode-changed=${this._handleCardGuiModeChanged}
+                ></hui-card-element-editor>`,
+              )}
+            `}
       </div>
     `;
+  }
+
+  private _toggleCardMode(): void {
+    const editor = this.shadowRoot?.querySelector("hui-card-element-editor") as
+      | (HTMLElement & { toggleMode(): void })
+      | null;
+    editor?.toggleMode();
+  }
+
+  private _handleCardGuiModeChanged(ev: CustomEvent): void {
+    ev.stopPropagation();
+    const detail = ev.detail as { guiMode: boolean; guiModeAvailable: boolean };
+    this._cardGuiMode = detail.guiMode;
+    this._cardGuiModeAvailable = detail.guiModeAvailable;
+  }
+
+  private _handleCardConfigChanged(ev: CustomEvent): void {
+    ev.stopPropagation();
+    const detail = ev.detail as { config: SubCardConfig; guiModeAvailable?: boolean };
+    const cards = [...this._cards];
+    const index = Math.min(this._selectedCardIndex, cards.length - 1);
+    if (index < 0) return;
+    cards[index] = detail.config;
+    if (detail.guiModeAvailable !== undefined) {
+      this._cardGuiModeAvailable = detail.guiModeAvailable;
+    }
+    this._commitCards(cards);
   }
 
 
@@ -951,6 +1066,34 @@ export class MosaicCardEditor extends LitElement {
         margin-top: 0;
         flex: 1;
         min-width: 0;
+      }
+
+      .sidebar-add {
+        border: 1px dashed var(--divider-color, #e0e0e0);
+        border-radius: 4px;
+        background: none;
+        color: var(--secondary-text-color);
+        font-size: 0.75rem;
+        font-family: inherit;
+        padding: 5px 6px;
+        cursor: pointer;
+      }
+
+      .sidebar-add:hover,
+      .sidebar-add.selected {
+        border-color: var(--primary-color);
+        color: var(--primary-color);
+      }
+
+      .card-editor-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        --mdc-icon-button-size: 36px;
+      }
+
+      .card-editor-toolbar .spacer {
+        flex: 1;
       }
 
       .sidebar-item-badge {
