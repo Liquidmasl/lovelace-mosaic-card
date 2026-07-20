@@ -229,12 +229,36 @@ When a topic needs more detail than a few bullets, create a dedicated file under
 - Preview `mosaic-card` carries the `inert` attribute — `pointer-events: none` alone is NOT enough, sub-cards that set pointer-events internally punch through it.
 - Editor's rows fallback must equal mosaic-card's fallback (8), or the picker overlay geometry disagrees with the preview grid.
 
-### Deploying a dev build to Marcel's live HA (fast loop, preferred over test container)
+### Dev loop against Marcel's live HA — **preferred: the 5173 dev server**
 
+HA has a Lovelace resource `http://192.168.0.10:5173/mosaic-card.js` (Marcel's dev
+machine) listed **before** the HACS resource. Serve that port and the dev build
+wins — no scp, no gzip, no HA restart:
+
+```bash
+npm run dev:serve   # scripts/dev-server.mjs — serves dist/ on 0.0.0.0:5173
+npm run watch       # second terminal: rebuild on save (no terser)
+```
+
+Then hard-refresh the browser. That's the whole loop.
+
+- `scripts/dev-server.mjs` is zero-dependency. Two headers are load-bearing:
+  **`Access-Control-Allow-Origin: *`** (HA loads it as a *cross-origin* ES module —
+  without CORS it fails silently: blank card, error only in console) and
+  **`Cache-Control: no-store`** (else the browser serves a stale build).
+- Verify reachability from HA itself, not just locally:
+  `ssh homeassistant "wget -S -qO- http://192.168.0.10:5173/mosaic-card.js"`
+- **Both resources define `mosaic-card`.** 5173 loads first and wins; the HACS
+  module then throws "already defined" in the console and stops evaluating.
+  Expected and harmless — but it means a console error is *not* evidence of a bug.
+  When the dev server is down the HACS resource takes over normally.
+- Stray resource `/local/mosaic-carddd.js` — dead, harmless.
+
+**Fallback (dev server not running):** copy straight into HACS's folder.
 - SSH host `homeassistant` (192.168.0.45, root) — card lives at `/homeassistant/www/community/lovelace-mosaic-card/mosaic-card.js`
 - **Must also regenerate `mosaic-card.js.gz`** next to it (`gzip -9 -kf`) — HA serves the stale .gz otherwise
 - Cache-bust in browser: `fetch(resourceUrl, {cache:"reload"})` then `location.reload()` — resource URL has a `?hacstag=` query, normal reload serves from cache
-- There is a dead Lovelace resource `http://192.168.0.10:5173/mosaic-card.js` (old Vite dev workflow) and a stray `/local/mosaic-carddd.js` — both fail to load and are harmless today, but the 5173 one will shadow the HACS resource if anything ever serves that port
+- This leaves a dev build in the HACS folder until the next HACS update overwrites it
 
 ### Grid picker drag constraints (mosaic-grid-size-picker.ts)
 
