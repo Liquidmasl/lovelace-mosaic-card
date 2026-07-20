@@ -260,6 +260,34 @@ Then hard-refresh the browser. That's the whole loop.
 - Cache-bust in browser: `fetch(resourceUrl, {cache:"reload"})` then `location.reload()` — resource URL has a `?hacstag=` query, normal reload serves from cache
 - This leaves a dev build in the HACS folder until the next HACS update overwrites it
 
+### Borrowing HA's card editor internals (mosaic-card-editor.ts)
+
+The editor composes HA's own elements instead of embedding the vertical-stack
+editor. One sidebar selection (`_selectedCardIndex`) drives the position grid,
+the per-card settings, and the card editor.
+
+- **`hui-card-element-editor`** — per-card editor. `.hass` / `.lovelace` /
+  `.value`; fires `config-changed` + `GUImode-changed`; has `toggleMode()`.
+  Setting `show-visibility-tab` gives the native Config|Visibility tabs, so we
+  do **not** hand-roll a visibility section.
+- **Do NOT pass `sectionConfig`** to it — that switches on HA's Layout tab,
+  which edits `grid_options` against a *section* grid and fights our own
+  position picker. Omitting it hides the tab (`_showLayoutTab` requires it).
+- **`keyed()` is mandatory** around it, with a stable key per
+  `(index, cards.length)` — see `_editorKey()`. Without it the element is reused
+  across selection changes and keeps the previous card's internal state
+  (config element, GUI/YAML mode, errors). This is the failure mode that makes
+  an embedded editor look broken for no visible reason.
+- **`hui-card-picker` is NOT in the edit-card chunk.** It ships with the
+  *create*-card dialog, so inside our editor it is normally undefined and
+  `whenDefined()` alone hangs forever. `hui-stack-card-editor` imports it, so
+  `hui-vertical-stack-card.getConfigElement()` pulls the chunk in as a side
+  effect; the returned element is discarded. See `_ensureCardPicker()`, which
+  defers this until the user actually opens the picker.
+- Gate the two elements on **separate** readiness flags — requiring both before
+  rendering anything hides the whole section, since the picker usually isn't
+  loaded.
+
 ### Grid picker drag constraints (mosaic-grid-size-picker.ts)
 
 Each drag handle must keep the card inside the grid:

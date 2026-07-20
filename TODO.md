@@ -27,14 +27,10 @@ Current `mode: auto | manual` with `auto_flow: dense | row | column` is confusin
 
 The editor UI and `MosaicCardConfig` would need to be updated accordingly.
 
-### Visibility support
-Consider adding a `visible` field (or `hidden`) to `CardGridOptions` so individual cards can be conditionally hidden (e.g. via template or static boolean). Unclear if HA template evaluation is feasible here; at minimum a static boolean toggle in the editor would be useful.
+---
 
-### New cards start tiny in the grid
-Cards added via the card picker get no `grid_options`, so `_resolveGridOptions` in `mosaic-card.ts` falls back to `columns: 2, rows: 1`. Fix: in the `config-changed` handler on the stack editor (`mosaic-card-editor.ts`), detect cards at index `>= existingCards.length` (newly added) and assign default `grid_options`. Default: `{ columns: 4, rows: 2 }` for auto mode; `{ columns: 4, rows: 2, column_start: 1, row_start: 1 }` for manual mode.
+## Done
 
-### Hide title field in the Cards (card picker) section
-The vertical-stack editor element we embed shows a "Title" input at the top. It should be hidden. Options:
-- Inject `<style>` into the stack editor's shadow root after `getConfigElement()` returns
-- Target `ha-textfield` or similar — inspect the exact element to find a stable selector
-- CSS: `editor.shadowRoot.querySelector('ha-textfield')?.style.display = 'none'` (fragile but quick)
+- **Visibility support** — implemented as native HA `visibility` conditions per sub-card, using `hui-card` for evaluation and HA's own editor UI. Superseded the originally proposed static boolean.
+- **New cards start tiny in the grid** — the editor owns the add path now and assigns mode-aware default `grid_options` in `defaultGridOptions()`.
+- **Hide title field in the Cards section** — moot: the embedded vertical-stack editor is gone, replaced by `hui-card-picker` + `hui-card-element-editor` driven by the sidebar selection.
