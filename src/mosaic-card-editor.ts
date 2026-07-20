@@ -33,7 +33,38 @@ interface CardGridOptions {
 interface SubCardConfig {
   type: string;
   grid_options?: CardGridOptions;
+  /** Visibility conditions in HA's native card format — evaluated by hui-card. */
+  visibility?: unknown[];
   [key: string]: unknown;
+}
+
+/**
+ * Sub-card fields the mosaic card owns and edits itself. They are hidden from
+ * the borrowed stack editor, which rebuilds configs from its own GUI editors
+ * and would otherwise drop them, and restored on the way back by index.
+ */
+const MOSAIC_OWNED_FIELDS = ["grid_options", "visibility"] as const;
+
+function stripOwnedFields(cards: SubCardConfig[]): SubCardConfig[] {
+  return cards.map((card) => {
+    const rest = { ...card };
+    for (const key of MOSAIC_OWNED_FIELDS) delete rest[key];
+    return rest;
+  });
+}
+
+function restoreOwnedFields(
+  cards: SubCardConfig[],
+  previous: SubCardConfig[],
+): SubCardConfig[] {
+  return cards.map((card, i) => {
+    const merged: Record<string, unknown> = { ...card };
+    for (const key of MOSAIC_OWNED_FIELDS) {
+      const value = previous[i]?.[key];
+      if (value !== undefined) merged[key] = value;
+    }
+    return merged as SubCardConfig;
+  });
 }
 
 interface HAGridOptions {
@@ -125,6 +156,13 @@ export class MosaicCardEditor extends LitElement {
   @state() private _yamlValue = "";
   @state() private _selectedCardIndex = 0;
   @state() private _cardsEditorReady = false;
+  @state() private _visibilityEditorReady = false;
+  /**
+   * When false (default) the preview runs in HA's preview mode: visibility
+   * conditions are ignored so every card stays visible and positionable.
+   * Toggling it on evaluates conditions live, showing the real current state.
+   */
+  @state() private _liveVisibility = false;
 
   private _previewRef: Ref<HTMLElement & { setConfig(c: unknown): void; hass: unknown }> = createRef();
   private _previewContainerRef: Ref<HTMLElement> = createRef();
@@ -186,6 +224,23 @@ export class MosaicCardEditor extends LitElement {
     this._observedContainer = container;
   }
 
+  /**
+   * hui-card-visibility-editor is HA's own Visibility tab UI (status line +
+   * ha-card-conditions-editor). It ships in the same chunk as
+   * hui-dialog-edit-card, which is by definition loaded — this editor only ever
+   * renders inside that dialog — so this resolves immediately in practice.
+   */
+  private _ensureVisibilityEditor(): void {
+    if (this._visibilityEditorReady) return;
+    if (customElements.get("hui-card-visibility-editor")) {
+      this._visibilityEditorReady = true;
+      return;
+    }
+    customElements.whenDefined("hui-card-visibility-editor").then(() => {
+      this._visibilityEditorReady = true;
+    });
+  }
+
   // ── HA lifecycle ────────────────────────────────────────────────────────────
 
   connectedCallback(): void {
@@ -197,6 +252,7 @@ export class MosaicCardEditor extends LitElement {
     this.updateComplete.then(async () => {
       this._ensureContainerObserved();
       this._updatePreviewScale();
+      this._ensureVisibilityEditor();
       const preview = this._previewRef.value;
       if (preview && this._config) {
         preview.setConfig(this._config);
@@ -224,18 +280,14 @@ export class MosaicCardEditor extends LitElement {
             if (cfg?.type !== "custom:mosaic-card") return;
             custom.stopPropagation();
             const newCards = cfg.cards ?? [];
-            const existingCards = this._config?.cards ?? [];
-            const merged = newCards.map((nc, i) => {
-              const g = existingCards[i]?.grid_options;
-              return g ? { ...nc, grid_options: g } : nc;
-            });
+            const merged = restoreOwnedFields(newCards, this._config?.cards ?? []);
             this._lastEditorCards = JSON.stringify(newCards);
             this._fireConfigChanged({ ...this._config!, cards: merged });
           });
           this._stackEditor = editor;
           if (this.hass) this._stackEditor.hass = this.hass;
           if (this.lovelace) this._stackEditor.lovelace = this.lovelace;
-          const cardsToSend = (this._config?.cards ?? []).map(({ grid_options: _g, ...rest }) => rest);
+          const cardsToSend = stripOwnedFields(this._config?.cards ?? []);
           this._lastEditorCards = JSON.stringify(cardsToSend);
           this._stackEditor.setConfig({ type: "custom:mosaic-card", cards: cardsToSend });
           this._cardsEditorReady = true;
@@ -247,7 +299,7 @@ export class MosaicCardEditor extends LitElement {
         // Reconnect after tab switch: re-insert and sync state.
         if (this.hass) this._stackEditor.hass = this.hass;
         if (this.lovelace) this._stackEditor.lovelace = this.lovelace;
-        const cardsToSend = (this._config?.cards ?? []).map(({ grid_options: _g, ...rest }) => rest);
+        const cardsToSend = stripOwnedFields(this._config?.cards ?? []);
         this._stackEditor.setConfig({ type: "custom:mosaic-card", cards: cardsToSend });
         await this.updateComplete;
         const stackContainer = this._stackEditorContainerRef.value;
@@ -306,7 +358,7 @@ export class MosaicCardEditor extends LitElement {
     }
 
     if (changedProps.has("_config") && this._config && this._stackEditor) {
-      const cardsToSend = (this._config.cards ?? []).map(({ grid_options: _g, ...rest }) => rest);
+      const cardsToSend = stripOwnedFields(this._config?.cards ?? []);
       const json = JSON.stringify(cardsToSend);
       if (json !== this._lastEditorCards) {
         this._lastEditorCards = json;
@@ -502,6 +554,7 @@ export class MosaicCardEditor extends LitElement {
     const scale = this._previewScale;
 
     return html`
+      ${this._renderVisibilityToggle(cards)}
       <div class="preview-area">
         <div class="card-sidebar">
           ${cards.map((card, i) => this._renderSidebarItem(card, i, i === selected))}
@@ -510,6 +563,7 @@ export class MosaicCardEditor extends LitElement {
           <mosaic-card
             inert
             ${ref(this._previewRef)}
+            .preview=${!this._liveVisibility}
             style="width: ${naturalWidth}px; zoom: ${scale};"
           ></mosaic-card>
           ${selectedCard ? html`
@@ -536,6 +590,31 @@ export class MosaicCardEditor extends LitElement {
     `;
   }
 
+  /**
+   * Only offered once at least one card has conditions — otherwise the toggle
+   * would do nothing visible.
+   */
+  private _renderVisibilityToggle(cards: SubCardConfig[]): TemplateResult {
+    if (!cards.some((c) => c.visibility?.length)) return html``;
+    return html`
+      <div class="preview-toolbar">
+        <ha-formfield label="Preview current visibility">
+          <ha-switch
+            .checked=${this._liveVisibility}
+            @change=${(e: Event) => {
+              this._liveVisibility = (e.target as HTMLInputElement).checked;
+            }}
+          ></ha-switch>
+        </ha-formfield>
+        <span class="helper-text">
+          ${this._liveVisibility
+            ? "Cards whose conditions are not met are hidden, as on the dashboard."
+            : "All cards shown regardless of their conditions."}
+        </span>
+      </div>
+    `;
+  }
+
   private _renderSidebarItem(card: SubCardConfig, index: number, selected: boolean): TemplateResult {
     const displayName = (card.type ?? "unknown").replace(/^custom:/, "").replace(/-/g, " ");
     return html`
@@ -543,6 +622,13 @@ export class MosaicCardEditor extends LitElement {
         <div class="sidebar-item-main">
           <div class="card-radio" aria-checked=${selected ? "true" : "false"}></div>
           <span class="sidebar-item-name">${displayName}</span>
+          ${card.visibility?.length
+            ? html`<ha-icon
+                class="sidebar-item-badge"
+                icon="mdi:eye-off-outline"
+                title="Has visibility conditions"
+              ></ha-icon>`
+            : nothing}
         </div>
       </div>
     `;
@@ -745,6 +831,35 @@ export class MosaicCardEditor extends LitElement {
           <div class="helper-text">CSS declarations on the card wrapper (e.g. <code>opacity: 0.7</code>)</div>
         </div>
       </div>
+      ${this._renderVisibilitySection(selected, selectedCard)}
+    `;
+  }
+
+  /**
+   * HA's own Visibility tab UI, borrowed wholesale. It takes the full sub-card
+   * config and hands back a copy with `visibility` set (or removed when the
+   * user deletes the last condition), so we just swap the card in place.
+   */
+  private _renderVisibilitySection(index: number, card: SubCardConfig): TemplateResult {
+    if (!this._visibilityEditorReady) return html``;
+    return html`
+      <div class="section">
+        <div class="section-title">Visibility</div>
+        <div class="helper-text">
+          The card is shown when ALL conditions below are met. Leave empty to always show it.
+        </div>
+        <hui-card-visibility-editor
+          .hass=${this.hass}
+          .config=${card}
+          .entityId=${typeof card.entity === "string" ? card.entity : undefined}
+          @value-changed=${(e: CustomEvent) => {
+            e.stopPropagation();
+            const updated = [...(this._config?.cards ?? [])];
+            updated[index] = (e.detail as { value: SubCardConfig }).value;
+            this._fireConfigChanged({ ...this._config!, cards: updated });
+          }}
+        ></hui-card-visibility-editor>
+      </div>
     `;
   }
 
@@ -823,6 +938,26 @@ export class MosaicCardEditor extends LitElement {
       }
 
       /* ── Preview area: sidebar + preview side by side ── */
+
+      .preview-toolbar {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 4px 12px;
+        margin-bottom: 8px;
+      }
+
+      .preview-toolbar .helper-text {
+        margin-top: 0;
+        flex: 1;
+        min-width: 0;
+      }
+
+      .sidebar-item-badge {
+        --mdc-icon-size: 14px;
+        color: var(--secondary-text-color);
+        flex-shrink: 0;
+      }
 
       .preview-area {
         display: flex;
