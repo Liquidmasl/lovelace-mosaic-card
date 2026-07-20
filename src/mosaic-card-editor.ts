@@ -151,6 +151,8 @@ export class MosaicCardEditor extends LitElement {
   /** GUI/YAML state of the embedded per-card editor, mirroring HA's stack editor. */
   @state() private _cardGuiMode = true;
   @state() private _cardGuiModeAvailable = true;
+  /** Layout is collapsed by default — it's set once, then rarely touched. */
+  @state() private _layoutExpanded = false;
   /**
    * When false (default) the preview runs in HA's preview mode: visibility
    * conditions are ignored so every card stays visible and positionable.
@@ -521,6 +523,7 @@ export class MosaicCardEditor extends LitElement {
     const scale = this._previewScale;
 
     return html`
+      ${this._renderModeAndGridSection(mode)}
       ${this._renderVisibilityToggle(cards)}
       <div class="preview-area">
         <div class="card-sidebar">
@@ -556,10 +559,8 @@ export class MosaicCardEditor extends LitElement {
           ` : nothing}
         </div>
       </div>
-      ${this._renderSelectedCardSettings()}
-      ${this._renderGridOptionsInfo()}
-      ${this._renderModeAndGridSection(mode)}
       ${this._renderCardsEditor()}
+      ${this._renderSelectedCardSettings()}
     `;
   }
 
@@ -588,13 +589,22 @@ export class MosaicCardEditor extends LitElement {
     `;
   }
 
+  private _cardDisplayName(card?: SubCardConfig): string {
+    return (card?.type ?? "unknown").replace(/^custom:/, "").replace(/-/g, " ");
+  }
+
+  /**
+   * Reordering and removing are operations on the card *list*, so they live on
+   * the list — the sidebar — rather than in the card's settings panel. Shown
+   * only on the selected item to keep the 120px column readable.
+   */
   private _renderSidebarItem(card: SubCardConfig, index: number, selected: boolean): TemplateResult {
-    const displayName = (card.type ?? "unknown").replace(/^custom:/, "").replace(/-/g, " ");
+    const count = this._cards.length;
     return html`
       <div class="sidebar-item ${selected ? "selected" : ""}" @click=${() => this._selectCard(index)}>
         <div class="sidebar-item-main">
           <div class="card-radio" aria-checked=${selected ? "true" : "false"}></div>
-          <span class="sidebar-item-name">${displayName}</span>
+          <span class="sidebar-item-name">${this._cardDisplayName(card)}</span>
           ${card.visibility?.length
             ? html`<ha-icon
                 class="sidebar-item-badge"
@@ -603,6 +613,34 @@ export class MosaicCardEditor extends LitElement {
               ></ha-icon>`
             : nothing}
         </div>
+        ${selected
+          ? html`
+              <div class="sidebar-item-actions" @click=${(e: Event) => e.stopPropagation()}>
+                <ha-icon-button
+                  label="Move up"
+                  .disabled=${index === 0}
+                  .path=${"M7.41,15.41L12,10.83L16.59,15.41L18,14L12,8L6,14L7.41,15.41Z"}
+                  @click=${() => this._moveCard(index, index - 1)}
+                ></ha-icon-button>
+                <ha-icon-button
+                  label="Move down"
+                  .disabled=${index === count - 1}
+                  .path=${"M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"}
+                  @click=${() => this._moveCard(index, index + 1)}
+                ></ha-icon-button>
+                <ha-icon-button
+                  label="Duplicate"
+                  .path=${"M19,21H8V7H19M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5M16,1H4A2,2 0 0,0 2,3V17H4V3H16V1Z"}
+                  @click=${() => this._duplicateCard(index)}
+                ></ha-icon-button>
+                <ha-icon-button
+                  label="Delete"
+                  .path=${"M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z"}
+                  @click=${() => this._deleteCard(index)}
+                ></ha-icon-button>
+              </div>
+            `
+          : nothing}
       </div>
     `;
   }
@@ -637,8 +675,17 @@ export class MosaicCardEditor extends LitElement {
 
   private _renderModeAndGridSection(mode: string): TemplateResult {
     return html`
-      <div class="section">
-        <div class="section-title">Layout</div>
+      <ha-expansion-panel
+        outlined
+        .header=${"Layout"}
+        .secondary=${this._layoutSummary(mode)}
+        .expanded=${this._layoutExpanded}
+        @expanded-changed=${(e: CustomEvent) => {
+          this._layoutExpanded = (e.detail as { expanded: boolean }).expanded;
+        }}
+      >
+        <div class="section layout-section">
+          ${this._renderGridOptionsInfo()}
 
         <div class="field">
           <label>Mode</label>
@@ -758,8 +805,22 @@ export class MosaicCardEditor extends LitElement {
               </div>
             `
           : nothing}
-      </div>
+        </div>
+      </ha-expansion-panel>
     `;
+  }
+
+  /** One-line summary so the collapsed Layout panel still says something useful. */
+  private _layoutSummary(mode: string): string {
+    const cols = this._getInternalGridColumns();
+    const rows = this._getInternalGridRows();
+    const sub = this._getRowSubdivision();
+    const parts = [
+      mode === "auto" ? "Auto" : "Manual",
+      `${cols}×${rows}`,
+    ];
+    if (sub !== 1) parts.push(`${sub}× rows`);
+    return parts.join(" · ");
   }
 
   // ── Section: Selected card settings ─────────────────────────────────────────
@@ -926,34 +987,12 @@ export class MosaicCardEditor extends LitElement {
             `
           : html`
               <div class="card-editor-toolbar">
+                <span class="card-editor-name">${this._cardDisplayName(cards[selected])}</span>
                 <ha-icon-button
                   .label=${this._cardGuiMode ? "Edit as YAML" : "Edit in GUI"}
                   .disabled=${!this._cardGuiModeAvailable}
                   .path=${"M14.6 16.6L19.2 12L14.6 7.4L16 6L22 12L16 18L14.6 16.6M9.4 16.6L4.8 12L9.4 7.4L8 6L2 12L8 18L9.4 16.6Z"}
                   @click=${this._toggleCardMode}
-                ></ha-icon-button>
-                <span class="spacer"></span>
-                <ha-icon-button
-                  label="Move up"
-                  .disabled=${selected === 0}
-                  .path=${"M7.41,15.41L12,10.83L16.59,15.41L18,14L12,8L6,14L7.41,15.41Z"}
-                  @click=${() => this._moveCard(selected, selected - 1)}
-                ></ha-icon-button>
-                <ha-icon-button
-                  label="Move down"
-                  .disabled=${selected === cards.length - 1}
-                  .path=${"M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"}
-                  @click=${() => this._moveCard(selected, selected + 1)}
-                ></ha-icon-button>
-                <ha-icon-button
-                  label="Duplicate"
-                  .path=${"M19,21H8V7H19M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5M16,1H4A2,2 0 0,0 2,3V17H4V3H16V1Z"}
-                  @click=${() => this._duplicateCard(selected)}
-                ></ha-icon-button>
-                <ha-icon-button
-                  label="Delete"
-                  .path=${"M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z"}
-                  @click=${() => this._deleteCard(selected)}
                 ></ha-icon-button>
               </div>
               ${keyed(
@@ -1088,12 +1127,41 @@ export class MosaicCardEditor extends LitElement {
       .card-editor-toolbar {
         display: flex;
         align-items: center;
-        justify-content: flex-end;
+        justify-content: space-between;
         --mdc-icon-button-size: 36px;
       }
 
       .card-editor-toolbar .spacer {
         flex: 1;
+      }
+
+      .card-editor-name {
+        font-size: 0.875rem;
+        text-transform: capitalize;
+        color: var(--secondary-text-color);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .sidebar-item-actions {
+        display: flex;
+        justify-content: space-between;
+        padding: 0 2px 2px;
+      }
+
+      /*
+       * ha-icon-button ignores --mdc-icon-button-size and lays out at 48px,
+       * which overflows the 120px sidebar. Size the host directly instead.
+       */
+      .sidebar-item-actions ha-icon-button {
+        width: 28px;
+        height: 28px;
+        --mdc-icon-size: 16px;
+      }
+
+      .layout-section {
+        margin: 0;
       }
 
       .sidebar-item-badge {
