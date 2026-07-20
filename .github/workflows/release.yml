@@ -50,7 +50,6 @@ jobs:
           body: ${{ steps.changelog.outputs.notes }}
           files: dist/mosaic-card.js
 
-      - name: HACS Validation
-        uses: hacs/action@22.5.0
-        with:
-          category: plugin
+      # No HACS validation here: this job runs on the closed-PR event, where the
+      # hacs action validates the PR head ref (release/*) — that branch is
+      # auto-deleted on merge, so it always 404s. Validation runs in validate.yml.
