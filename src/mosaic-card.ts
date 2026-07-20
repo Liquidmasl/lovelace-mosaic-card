@@ -44,6 +44,11 @@ interface CardGridOptions {
 interface SubCardConfig {
   type: string;
   grid_options?: CardGridOptions;
+  /**
+   * Visibility conditions, identical in shape to HA's native card `visibility`.
+   * Evaluated by hui-card — we never interpret them ourselves.
+   */
+  visibility?: unknown[];
   [key: string]: unknown;
 }
 
@@ -101,17 +106,25 @@ interface LovelaceSectionConfig {
   [key: string]: unknown;
 }
 
-interface HACardElement extends HTMLElement {
-  setConfig(config: Record<string, unknown>): void;
+/**
+ * HA's own `hui-card` wrapper element (src/panels/lovelace/cards/hui-card.ts).
+ *
+ * It is what HA's views and sections use to host a card, and it handles all of
+ * the fiddly parts for us: creating the element (incl. error cards), `ll-rebuild`
+ * / `ll-upgrade`, delivering hass *before* the element is attached, and — the
+ * reason we use it — evaluating `config.visibility` via `checkConditionsMet()`
+ * with live listeners for screen/time conditions. When conditions fail it sets
+ * `display: none` + the `hidden` attribute on itself and detaches the child.
+ */
+interface HuiCardElement extends HTMLElement {
+  config?: Record<string, unknown>;
   hass?: unknown;
-  getCardSize?(): number;
-  getGridOptions?(): HAGridOptions;
-  /** LitElement method — absent until the custom element definition loads. */
-  requestUpdate?(): void;
-}
-
-interface CardHelpers {
-  createCardElement(config: Record<string, unknown>): HACardElement;
+  preview?: boolean;
+  /** Builds the inner card element immediately instead of on first update. */
+  load?(): void;
+  getCardSize?(): number | Promise<number>;
+  /** Grid options reported by the inner card itself (not from config). */
+  getElementGridOptions?(): HAGridOptions;
 }
 
 interface CustomCardEntry {
@@ -123,7 +136,6 @@ interface CustomCardEntry {
 declare global {
   interface Window {
     customCards?: CustomCardEntry[];
-    loadCardHelpers?(): Promise<CardHelpers>;
   }
 }
 
@@ -133,9 +145,15 @@ declare global {
 export class MosaicCard extends LitElement {
   @property({ attribute: false }) public hass?: unknown;
   @property({ attribute: false }) public sectionConfig?: LovelaceSectionConfig;
+  /**
+   * Set by HA (and by our editor's preview) while the dashboard is in edit mode.
+   * Forwarded to every hui-card, which then ignores visibility conditions so
+   * conditionally-hidden cards stay visible and editable.
+   */
+  @property({ attribute: false }) public preview = false;
 
   @state() private _config?: MosaicCardConfig;
-  @state() private _cardElements: HACardElement[] = [];
+  @state() private _cardElements: HuiCardElement[] = [];
 
   // ── Styles ──────────────────────────────────────────────────────────────────
 
@@ -164,6 +182,16 @@ export class MosaicCard extends LitElement {
         min-width: 0;
         min-height: 0;
         position: relative;
+      }
+
+      /*
+       * hui-card sets the "hidden" attribute on itself when a card's visibility
+       * conditions are not met. Collapse the wrapper too, so the cell is freed
+       * for dense auto-flow instead of leaving a hole. Mirrors how HA's own
+       * hui-grid-section hides cards.
+       */
+      .mosaic-grid > .card-wrapper:has(> hui-card[hidden]) {
+        display: none;
       }
 
       /*
@@ -196,16 +224,12 @@ export class MosaicCard extends LitElement {
   }
 
   protected updated(changedProperties: PropertyValues): void {
-    // Forward hass to all child card elements whenever it changes.
+    // hui-card is reactive on both — just forward and let it do the work.
     if (changedProperties.has("hass") && this.hass !== undefined) {
-      const firstHass = changedProperties.get("hass") === undefined;
-      for (const el of this._cardElements) {
-        el.hass = this.hass;
-        // Some cards have a non-reactive hass setter (e.g. mushroom-chips-card)
-        // and stay blank forever if their first render ran without hass —
-        // force one update when hass first arrives.
-        if (firstHass) el.requestUpdate?.();
-      }
+      for (const el of this._cardElements) el.hass = this.hass;
+    }
+    if (changedProperties.has("preview")) {
+      for (const el of this._cardElements) el.preview = this.preview;
     }
   }
 
@@ -218,47 +242,29 @@ export class MosaicCard extends LitElement {
       return;
     }
 
-    const helpers = await window.loadCardHelpers?.();
-    if (!helpers) {
-      console.error("mosaic-card: window.loadCardHelpers is not available");
-      return;
+    // hui-card ships with the Lovelace frontend chunk, which is always loaded by
+    // the time a custom card renders. Awaiting it costs nothing in practice and
+    // guards against being instantiated outside a dashboard.
+    if (!customElements.get("hui-card")) {
+      await customElements.whenDefined("hui-card");
     }
 
-    const elements: HACardElement[] = cards.map((cardConfig) =>
-      this._createCardElement(helpers, cardConfig),
+    this._cardElements = cards.map((cardConfig) =>
+      this._createCardElement(cardConfig),
     );
-
-    this._cardElements = elements;
   }
 
-  private _createCardElement(
-    helpers: CardHelpers,
-    cardConfig: SubCardConfig,
-  ): HACardElement {
-    // Strip our own grid_options before passing config to the sub-card.
+  private _createCardElement(cardConfig: SubCardConfig): HuiCardElement {
+    // Strip our own grid_options — hui-card would otherwise report them as the
+    // card's grid options, and the sub-card has no use for them.
     const { grid_options: _stripped, ...subConfig } = cardConfig;
-    const el = helpers.createCardElement(subConfig as Record<string, unknown>);
-    if (this.hass !== undefined) {
-      el.hass = this.hass;
-      // createCardElement calls setConfig before we can deliver hass; cards
-      // with a non-reactive hass setter would otherwise first-render blank.
-      el.requestUpdate?.();
-    }
-    // HA fires ll-rebuild on an element when its (lazily loaded) custom element
-    // definition arrives after creation, or when the card wants to be recreated.
-    // Containers must recreate the child, or cards created before their JS
-    // loaded stay permanently blank (e.g. mushroom cards in the editor preview).
-    el.addEventListener("ll-rebuild", (ev) => {
-      ev.stopPropagation();
-      const index = this._cardElements.indexOf(el);
-      if (index === -1) return;
-      const replacement = this._createCardElement(helpers, cardConfig);
-      this._cardElements = [
-        ...this._cardElements.slice(0, index),
-        replacement,
-        ...this._cardElements.slice(index + 1),
-      ];
-    });
+    const el = document.createElement("hui-card") as HuiCardElement;
+    el.config = subConfig as Record<string, unknown>;
+    el.preview = this.preview;
+    if (this.hass !== undefined) el.hass = this.hass;
+    // Build the inner element now so _resolveGridOptions can read its native
+    // grid options during this render pass rather than one frame late.
+    el.load?.();
     return el;
   }
 
@@ -270,7 +276,7 @@ export class MosaicCard extends LitElement {
    */
   private _resolveGridOptions(
     cardConfig: SubCardConfig,
-    element: HACardElement,
+    element: HuiCardElement,
   ): Required<Pick<CardGridOptions, "columns" | "rows">> & CardGridOptions {
     if (cardConfig.grid_options) {
       return {
@@ -281,7 +287,9 @@ export class MosaicCard extends LitElement {
     }
 
     // Fall back to the sub-card's own HA grid options (native defaults).
-    const native = element.getGridOptions?.();
+    // getElementGridOptions() asks the inner card only — getGridOptions() would
+    // merge in config values we already handled above.
+    const native = element.getElementGridOptions?.();
     return {
       columns: typeof native?.columns === "number" ? native.columns : 2,
       rows: typeof native?.rows === "number" ? native.rows : 1,
@@ -413,10 +421,10 @@ export class MosaicCard extends LitElement {
    */
   public getCardSize(): number {
     if (!this._cardElements.length) return 3;
-    return this._cardElements.reduce(
-      (total, el) => total + (el.getCardSize?.() ?? 1),
-      0,
-    );
+    return this._cardElements.reduce((total, el) => {
+      const size = el.getCardSize?.();
+      return total + (typeof size === "number" ? size : 1);
+    }, 0);
   }
 
   /**
