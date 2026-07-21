@@ -234,7 +234,6 @@ export class MosaicCardEditor extends LitElement {
     const container = this._previewContainerRef.value;
     if (!container) return;
     this._previewScale = Math.min(1, container.clientWidth / this._naturalPreviewWidth());
-    this._updateOverlayGeometry();
     // The natural width follows the live section, which can resize without the
     // container changing (viewport resize, sidebar toggle) — watch it too.
     const section = this._liveSection;
@@ -247,6 +246,7 @@ export class MosaicCardEditor extends LitElement {
 
   private _observedContainer?: Element;
   private _observedSection?: Element;
+  private _observedGrid?: Element;
 
   /**
    * Attach the ResizeObserver to the current preview container. The container
@@ -257,10 +257,32 @@ export class MosaicCardEditor extends LitElement {
   private _ensureContainerObserved(): void {
     const container = this._previewContainerRef.value;
     if (!container || this._observedContainer === container) return;
-    this._resizeObserver ??= new ResizeObserver(() => this._updatePreviewScale());
+    this._resizeObserver ??= new ResizeObserver(() => {
+      this._updatePreviewScale();
+      this._updateOverlayGeometry();
+    });
     if (this._observedContainer) this._resizeObserver.unobserve(this._observedContainer);
     this._resizeObserver.observe(container);
     this._observedContainer = container;
+  }
+
+  /**
+   * Watch the rendered grid itself. Catches size changes we don't drive — most
+   * importantly `rows: auto`, where the grid grows as lazily-loaded sub-cards
+   * arrive. Note this does NOT fire for zoom changes: zoom rescales the element
+   * without changing its own box, so those are handled by the post-render
+   * measurement in updated().
+   */
+  private _ensureGridObserved(): void {
+    const grid = this._previewRef.value?.shadowRoot?.querySelector(".mosaic-grid");
+    if (!grid || this._observedGrid === grid) return;
+    this._resizeObserver ??= new ResizeObserver(() => {
+      this._updatePreviewScale();
+      this._updateOverlayGeometry();
+    });
+    if (this._observedGrid) this._resizeObserver.unobserve(this._observedGrid);
+    this._resizeObserver.observe(grid);
+    this._observedGrid = grid;
   }
 
   /**
@@ -338,6 +360,7 @@ export class MosaicCardEditor extends LitElement {
     this._resizeObserver = undefined;
     this._observedContainer = undefined;
     this._observedSection = undefined;
+    this._observedGrid = undefined;
   }
 
   protected firstUpdated(): void {
@@ -348,6 +371,13 @@ export class MosaicCardEditor extends LitElement {
     super.updated(changedProps);
 
     this._ensureContainerObserved();
+    this._ensureGridObserved();
+
+    // Measure the overlay after every render, not inside _updatePreviewScale():
+    // that method *sets* the zoom, so measuring there always reads the layout
+    // from before the new zoom is applied and leaves the handles a frame stale.
+    // The value is only written when it actually changes, so this settles.
+    requestAnimationFrame(() => this._updateOverlayGeometry());
 
     if (changedProps.has("_config") && this._config) {
       // If column count shrank, clamp sub-cards that now extend outside the grid.
