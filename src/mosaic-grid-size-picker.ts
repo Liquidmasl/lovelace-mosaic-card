@@ -503,10 +503,14 @@ export class MosaicGridSizePicker extends LitElement {
         touch-action: none;
       }
 
-      /* Overlay mode: transparent, fills parent, pointer-events only on handles */
+      /*
+       * Overlay mode: transparent, pointer-events only on handles.
+       * Geometry is set inline by the editor to match the *grid* rather than
+       * the preview container — the card's padding and border inset the grid,
+       * and anything in card_css can inset it further.
+       */
       :host([overlay]) {
         position: absolute;
-        inset: 0;
         padding: 0;
         pointer-events: none;
       }

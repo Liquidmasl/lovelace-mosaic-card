@@ -293,6 +293,36 @@ the per-card settings, and the card editor.
   rendering anything hides the whole section, since the picker usually isn't
   loaded.
 
+### The card always renders an `ha-card`
+
+`mosaic-card.render()` always wraps the grid in `ha-card` — the container every
+HA card uses. `background: false` (default is true) does **not** remove it; it
+sets `--ha-card-background: transparent`, `--ha-card-box-shadow: none` and
+`--ha-card-border-width: 0`, the same neutralise-via-custom-properties trick the
+per-sub-card `no_border` / `no_background` options use.
+
+Why it must be unconditional: `card-mod` styles a card by targeting
+`ha-card { … }` inside its shadow root. With no `ha-card` the selector matches
+nothing and card-mod **silently does nothing** — which is why mosaics used to be
+nested inside `vertical-stack-in-card` purely to borrow one. Making the element
+conditional would mean card-mod working or not depending on an unrelated toggle.
+
+`card_padding` (px) and `card_css` (raw declarations) are applied inline on the
+ha-card; inline beats the `:host` rule carrying the theme defaults, so an empty
+`card_css` means "use the theme's card style".
+
+### Editor drag overlay must be measured, not assumed
+
+`mosaic-grid-size-picker[overlay]` is positioned from a measurement of the
+rendered `.mosaic-grid`, not `inset: 0` on the preview container — the ha-card's
+border and `card_padding` inset the grid, and `card_css` can inset it
+arbitrarily. See `_updateOverlayGeometry()`. Two gotchas:
+- Read both rects with `getBoundingClientRect()`; that is screen space, so the
+  preview's `zoom` is already accounted for.
+- Subtract `container.clientTop` / `clientLeft`. Absolute positioning is relative
+  to the padding box while `getBoundingClientRect` measures the border box —
+  forgetting this leaves a constant 1px offset.
+
 ### Grid picker drag constraints (mosaic-grid-size-picker.ts)
 
 Each drag handle must keep the card inside the grid:
