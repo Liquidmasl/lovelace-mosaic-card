@@ -95,12 +95,24 @@ win.customCards.push({ type: "mosaic-card", name: "Mosaic Card", description: ".
 - `hass` property typed as `Record<string, unknown>` (broaden as needed, HA types not vendored)
 - TypeScript `noUnusedLocals`, `noUnusedParameters`, `noImplicitReturns` all enabled — compiler is strict
 
+### Manual placement only — there is no "auto mode"
+
+`mode` and `auto_flow` were removed: the card is about deliberate placement.
+Placement is now decided **per card**, not card-wide — a sub-card with an
+explicit `column_start`/`row_start` is pinned there, one without is auto-placed
+into the next free slot by CSS Grid. New cards from the picker get
+`row_start: maxUsedRow + 1` so they land below existing content instead of
+stacking on cell 1,1.
+
 ### Column count: where it comes from (non-obvious)
 
 `mosaic-card-editor._getInternalGridColumns()` reads columns in priority order:
 1. `config.grid_options.columns` — set by HA's native "Layout" tab when user resizes the card in the dashboard
 2. `config.columns` — the mosaic card's own explicit columns field
 3. Default: `12`
+
+`grid_options.rows` is deliberately NOT read for the internal row count — see
+the row-count section below; the two use different units.
 
 There is **no columns slider** in the editor GUI. Column count changes come from HA's native card-size editor, which calls `setConfig()` on the editor. There IS a Rows slider (because HA's native editor caps rows at 8).
 

@@ -2,7 +2,7 @@ import { LitElement, html, css, CSSResultGroup, TemplateResult, nothing, Propert
 import { customElement, property, state } from "lit/decorators.js";
 import { createRef, ref, Ref } from "lit/directives/ref.js";
 import { keyed } from "lit/directives/keyed.js";
-import { effectiveRowCount } from "./mosaic-card";
+import { effectiveRowCount, maxUsedRow } from "./mosaic-card";
 import type { MosaicCardConfig as MosaicCardRuntimeConfig } from "./mosaic-card";
 import type { GridSizeValue } from "./mosaic-grid-size-picker";
 import "./mosaic-grid-size-picker";
@@ -45,9 +45,14 @@ interface SubCardConfig {
  * Grid footprint given to a freshly picked card. Without it _resolveGridOptions
  * falls back to 2×1, which lands new cards as unreadable slivers.
  */
-function defaultGridOptions(mode: string): CardGridOptions {
-  const base: CardGridOptions = { columns: 4, rows: 2 };
-  return mode === "manual" ? { ...base, column_start: 1, row_start: 1 } : base;
+function defaultGridOptions(config: MosaicCardConfig): CardGridOptions {
+  // Place it on the first free row rather than on top of whatever is at 1,1.
+  return {
+    columns: 4,
+    rows: 2,
+    column_start: 1,
+    row_start: maxUsedRow(config as unknown as MosaicCardRuntimeConfig) + 1,
+  };
 }
 
 interface HAGridOptions {
@@ -57,12 +62,10 @@ interface HAGridOptions {
 
 interface MosaicCardConfig {
   type: string;
-  mode?: "auto" | "manual";
   rows?: number;
   columns?: number;
   column_gap?: number;
   row_gap?: number;
-  auto_flow?: "dense" | "row" | "column";
   row_subdivision?: 1 | 2 | 4;
   title?: string;
   strip_borders?: boolean;
@@ -156,8 +159,6 @@ export class MosaicCardEditor extends LitElement {
   @property({ attribute: false }) public sectionConfig?: LovelaceSectionConfig;
 
   @state() private _config?: MosaicCardConfig;
-  @state() private _guiMode = true;
-  @state() private _yamlValue = "";
   @state() private _selectedCardIndex = 0;
   /** Card picker replaces the card editor while adding. */
   @state() private _addingCard = false;
@@ -430,20 +431,12 @@ export class MosaicCardEditor extends LitElement {
 
   public setConfig(config: MosaicCardConfig): void {
     this._config = config;
-    this._yamlValue = this._serializeYaml(config);
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
 
-  private _serializeYaml(config: MosaicCardConfig): string {
-    // Simple YAML serialization using JSON as a fallback for the code editor.
-    // HA's ha-code-editor will display this; power users can edit raw JSON/YAML.
-    return JSON.stringify(config, null, 2);
-  }
-
   private _fireConfigChanged(config: MosaicCardConfig): void {
     this._config = config;
-    this._yamlValue = this._serializeYaml(config);
     const event = new CustomEvent("config-changed", {
       detail: { config },
       bubbles: true,
@@ -530,67 +523,23 @@ export class MosaicCardEditor extends LitElement {
     return deepGet(this._config as unknown as Record<string, unknown>, key);
   }
 
-  // ── YAML mode ────────────────────────────────────────────────────────────────
-
-  private _toggleGuiMode(): void {
-    this._guiMode = !this._guiMode;
-  }
-
-  private _yamlChanged(ev: CustomEvent): void {
-    ev.stopPropagation();
-    const value = (ev.detail as { value: string }).value;
-    this._yamlValue = value;
-    try {
-      const parsed = JSON.parse(value) as MosaicCardConfig;
-      this._config = parsed;
-      const event = new CustomEvent("config-changed", {
-        detail: { config: parsed },
-        bubbles: true,
-        composed: true,
-      });
-      this.dispatchEvent(event);
-    } catch {
-      // Invalid JSON — don't fire config-changed; let user keep editing
-    }
-  }
-
   // ── Render ───────────────────────────────────────────────────────────────────
 
   protected render(): TemplateResult {
     if (!this._config) return html``;
 
-    const mode = (this._get("mode") as string) ?? "auto";
-
+    // No YAML toggle here: HA's own dialog already offers "Show code editor",
+    // which edits the same config.
     return html`
       <div class="header">
         <h3 class="title">Mosaic Card</h3>
-        <ha-icon-button
-          .label=${this._guiMode ? "Switch to YAML" : "Switch to GUI"}
-          .path=${this._guiMode
-            ? "M14.6 16.6L19.2 12L14.6 7.4L16 6L22 12L16 18L14.6 16.6M9.4 16.6L4.8 12L9.4 7.4L8 6L2 12L8 18L9.4 16.6Z"
-            : "M3 5V3H21V5H3M3 19H21V21H3V19M13 9H3V15H13V9M21 9H15V11H21V9M21 13H15V15H21V13Z"}
-          @click=${this._toggleGuiMode}
-        ></ha-icon-button>
       </div>
 
-      ${this._guiMode ? this._renderGui(mode) : this._renderYaml()}
+      ${this._renderGui()}
     `;
   }
 
-  private _renderYaml(): TemplateResult {
-    return html`
-      <ha-code-editor
-        mode="yaml"
-        .value=${this._yamlValue}
-        @value-changed=${this._yamlChanged}
-        autofocus
-        autocomplete-entities
-        autocomplete-icons
-      ></ha-code-editor>
-    `;
-  }
-
-  private _renderGui(mode: string): TemplateResult {
+  private _renderGui(): TemplateResult {
     const cards = (this._get("cards") as SubCardConfig[]) ?? [];
     const gridColumns = this._getInternalGridColumns();
     const gridRows = this._getInternalGridRows();
@@ -600,7 +549,7 @@ export class MosaicCardEditor extends LitElement {
     const scale = this._previewScale;
 
     return html`
-      ${this._renderModeAndGridSection(mode)}
+      ${this._renderLayoutSection()}
       <div class="group">
       ${this._renderVisibilityToggle(cards)}
       <div class="preview-area">
@@ -624,7 +573,6 @@ export class MosaicCardEditor extends LitElement {
             <mosaic-grid-size-picker
               overlay
               style=${this._overlayGeometry}
-              .mode=${mode as "auto" | "manual"}
               .gridColumns=${gridColumns}
               .gridRows=${gridRows}
               .value=${(selectedCard.grid_options ?? {}) as GridSizeValue}
@@ -768,12 +716,13 @@ export class MosaicCardEditor extends LitElement {
 
   // ── Section: Mode + Grid ─────────────────────────────────────────────────────
 
-  private _renderModeAndGridSection(mode: string): TemplateResult {
+  private _renderLayoutSection(): TemplateResult {
+    const sub = this._getRowSubdivision();
     return html`
       <ha-expansion-panel
         outlined
         .header=${"Layout"}
-        .secondary=${this._layoutSummary(mode)}
+        .secondary=${this._layoutSummary()}
         .expanded=${this._layoutExpanded}
         @expanded-changed=${(e: CustomEvent) => {
           this._layoutExpanded = (e.detail as { expanded: boolean }).expanded;
@@ -781,126 +730,60 @@ export class MosaicCardEditor extends LitElement {
       >
         <div class="section layout-section">
           ${this._renderGridOptionsInfo()}
+
+          <div class="subheading">Grid</div>
+          <div class="field-grid">
+            <div class="field">
+              <label>Rows</label>
+              <ha-selector
+                .hass=${this.hass}
+                .selector=${{ number: { min: 1, max: 32 * sub, mode: "box", step: 1 } }}
+                .value=${this._getInternalGridRows()}
+                @value-changed=${(e: CustomEvent) => this._rowsChanged(e)}
+              ></ha-selector>
+            </div>
+            <div class="field">
+              <label>Row height</label>
+              <ha-selector
+                .hass=${this.hass}
+                .selector=${{
+                  select: {
+                    options: [
+                      { value: "1", label: "56 px (1×)" },
+                      { value: "2", label: "28 px (2×)" },
+                      { value: "4", label: "14 px (4×)" },
+                    ],
+                    mode: "dropdown",
+                  },
+                }}
+                .value=${String(sub)}
+                @value-changed=${(e: CustomEvent) => this._subdivisionChanged(e)}
+              ></ha-selector>
+            </div>
+            <div class="field">
+              <label>Column gap</label>
+              <ha-selector
+                .hass=${this.hass}
+                .selector=${{ number: { min: 0, max: 32, mode: "box", step: 1, unit_of_measurement: "px" } }}
+                .value=${this._get("column_gap") ?? 8}
+                .configValue=${"column_gap"}
+                @value-changed=${this._valueChanged}
+              ></ha-selector>
+            </div>
+            <div class="field">
+              <label>Row gap</label>
+              <ha-selector
+                .hass=${this.hass}
+                .selector=${{ number: { min: 0, max: 32, mode: "box", step: 1, unit_of_measurement: "px" } }}
+                .value=${this._get("row_gap") ?? 8}
+                .configValue=${"row_gap"}
+                @value-changed=${this._valueChanged}
+              ></ha-selector>
+            </div>
+          </div>
+
+          <div class="subheading">Appearance</div>
           ${this._renderBackgroundFields()}
-
-        <div class="field">
-          <label>Mode</label>
-          <ha-selector
-            .hass=${this.hass}
-            .selector=${{
-              select: {
-                options: [
-                  { value: "auto", label: "Auto" },
-                  { value: "manual", label: "Manual" },
-                ],
-                mode: "list",
-              },
-            }}
-            .value=${this._get("mode") ?? "auto"}
-            .configValue=${"mode"}
-            @value-changed=${this._valueChanged}
-          ></ha-selector>
-        </div>
-
-        <div class="field">
-          <label>Rows</label>
-          <ha-selector
-            .hass=${this.hass}
-            .selector=${{
-              number: {
-                min: 1,
-                max: 32 * this._getRowSubdivision(),
-                mode: "slider",
-                step: 1,
-              },
-            }}
-            .value=${this._getInternalGridRows()}
-            @value-changed=${(e: CustomEvent) => this._rowsChanged(e)}
-          ></ha-selector>
-          <div class="helper-text">Number of rows in the mosaic grid</div>
-        </div>
-
-        <div class="field">
-          <label>Row subdivision</label>
-          <ha-selector
-            .hass=${this.hass}
-            .selector=${{
-              select: {
-                options: [
-                  { value: "1", label: "1× (56 px rows)" },
-                  { value: "2", label: "2× (28 px rows)" },
-                  { value: "4", label: "4× (14 px rows)" },
-                ],
-                mode: "list",
-              },
-            }}
-            .value=${String(this._getRowSubdivision())}
-            @value-changed=${(e: CustomEvent) => this._subdivisionChanged(e)}
-          ></ha-selector>
-          <div class="helper-text">Splits the standard row into finer units for more precise vertical sizing</div>
-        </div>
-
-        <div class="field">
-          <label>Column Gap (px)</label>
-          <ha-selector
-            .hass=${this.hass}
-            .selector=${{
-              number: {
-                min: 0,
-                max: 32,
-                mode: "slider",
-                step: 1,
-                unit_of_measurement: "px",
-              },
-            }}
-            .value=${this._get("column_gap") ?? 8}
-            .configValue=${"column_gap"}
-            @value-changed=${this._valueChanged}
-          ></ha-selector>
-        </div>
-
-        <div class="field">
-          <label>Row Gap (px)</label>
-          <ha-selector
-            .hass=${this.hass}
-            .selector=${{
-              number: {
-                min: 0,
-                max: 32,
-                mode: "slider",
-                step: 1,
-                unit_of_measurement: "px",
-              },
-            }}
-            .value=${this._get("row_gap") ?? 8}
-            .configValue=${"row_gap"}
-            @value-changed=${this._valueChanged}
-          ></ha-selector>
-        </div>
-
-        ${mode === "auto"
-          ? html`
-              <div class="field">
-                <label>Auto-flow Mode</label>
-                <ha-selector
-                  .hass=${this.hass}
-                  .selector=${{
-                    select: {
-                      options: [
-                        { value: "dense", label: "Dense" },
-                        { value: "row", label: "Row" },
-                        { value: "column", label: "Column" },
-                      ],
-                      mode: "list",
-                    },
-                  }}
-                  .value=${this._get("auto_flow") ?? "dense"}
-                  .configValue=${"auto_flow"}
-                  @value-changed=${this._valueChanged}
-                ></ha-selector>
-              </div>
-            `
-          : nothing}
         </div>
       </ha-expansion-panel>
     `;
@@ -916,31 +799,29 @@ export class MosaicCardEditor extends LitElement {
   private _renderBackgroundFields(): TemplateResult {
     const on = this._get("background") !== false;
     return html`
-      <div class="field inline-field">
-        <label>Card background</label>
-        <ha-switch
-          .checked=${on}
-          @change=${(e: Event) => {
-            const checked = (e.target as HTMLInputElement).checked;
-            // Default is on, so only the "off" case needs storing.
-            this._setValue("background", checked ? undefined : false);
-          }}
-        ></ha-switch>
-      </div>
-      <div class="helper-text spaced">
-        ${on
-          ? "Background, border and shadow from your theme, like any other card."
-          : "Transparent and borderless — for a mosaic nested inside another card."}
-      </div>
-      <div class="field">
-        <label>Padding (px)</label>
-        <ha-selector
-          .hass=${this.hass}
-          .selector=${{ number: { min: 0, max: 48, mode: "slider", step: 1, unit_of_measurement: "px" } }}
-          .value=${this._get("card_padding") ?? 0}
-          .configValue=${"card_padding"}
-          @value-changed=${this._valueChanged}
-        ></ha-selector>
+      <div class="field-grid">
+        <div class="field">
+          <label>Card background</label>
+          <ha-switch
+            class="field-switch"
+            .checked=${on}
+            @change=${(e: Event) => {
+              const checked = (e.target as HTMLInputElement).checked;
+              // Default is on, so only the "off" case needs storing.
+              this._setValue("background", checked ? undefined : false);
+            }}
+          ></ha-switch>
+        </div>
+        <div class="field">
+          <label>Padding</label>
+          <ha-selector
+            .hass=${this.hass}
+            .selector=${{ number: { min: 0, max: 48, mode: "box", step: 1, unit_of_measurement: "px" } }}
+            .value=${this._get("card_padding") ?? 0}
+            .configValue=${"card_padding"}
+            @value-changed=${this._valueChanged}
+          ></ha-selector>
+        </div>
       </div>
       <div class="field">
         <label>Card CSS</label>
@@ -952,8 +833,7 @@ export class MosaicCardEditor extends LitElement {
             this._setValue("card_css", (e.detail as { value: string }).value || undefined)}
         ></ha-selector>
         <div class="helper-text">
-          CSS declarations applied to the card, e.g.
-          <code>border-radius: 20px; background: linear-gradient(...)</code>.
+          Applied to the card, e.g. <code>border-radius: 20px</code>. Empty uses the theme's style.
         </div>
       </div>
     `;
@@ -968,15 +848,10 @@ export class MosaicCardEditor extends LitElement {
   }
 
   /** One-line summary so the collapsed Layout panel still says something useful. */
-  private _layoutSummary(mode: string): string {
-    const cols = this._getInternalGridColumns();
-    const rows = this._getInternalGridRows();
+  private _layoutSummary(): string {
+    const parts = [`${this._getInternalGridColumns()}×${this._getInternalGridRows()}`];
     const sub = this._getRowSubdivision();
-    const parts = [
-      mode === "auto" ? "Auto" : "Manual",
-      `${cols}×${rows}`,
-    ];
-    if (sub !== 1) parts.push(`${sub}× rows`);
+    if (sub !== 1) parts.push(`${56 / sub} px rows`);
     return parts.join(" · ");
   }
 
@@ -1033,10 +908,9 @@ export class MosaicCardEditor extends LitElement {
   private _handleCardPicked(ev: CustomEvent): void {
     ev.stopPropagation();
     const picked = (ev.detail as { config: SubCardConfig }).config;
-    const mode = (this._get("mode") as string) ?? "auto";
     const cards = [
       ...this._cards,
-      { ...picked, grid_options: defaultGridOptions(mode) },
+      { ...picked, grid_options: defaultGridOptions(this._config!) },
     ];
     this._addingCard = false;
     this._selectedCardIndex = cards.length - 1;
@@ -1366,6 +1240,38 @@ export class MosaicCardEditor extends LitElement {
 
       .layout-section {
         margin: 0;
+      }
+
+      /* Two-up field pairs keep the Layout panel compact. */
+      .field-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 4px 16px;
+        align-items: end;
+      }
+
+      .field-grid > .field {
+        margin-bottom: 8px;
+      }
+
+      /* Sit at the same height as a text/number box in the adjacent column. */
+      .field-switch {
+        margin-top: 10px;
+      }
+
+      .subheading {
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--secondary-text-color);
+        margin: 4px 0 8px;
+      }
+
+      .subheading:not(:first-child) {
+        margin-top: 16px;
+        padding-top: 12px;
+        border-top: 1px solid var(--divider-color, rgba(127, 127, 127, 0.2));
       }
 
       .sidebar-item-badge {
