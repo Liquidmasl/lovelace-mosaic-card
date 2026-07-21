@@ -14,13 +14,13 @@ interface CardGridOptions {
   columns?: number;
   /** Row span (how many grid rows this card occupies) */
   rows?: number;
-  /** Manual mode only: explicit column start position (1-based) */
+  /** Explicit column start (1-based). Omit to let the browser place the card. */
   column_start?: number;
-  /** Manual mode only: explicit row start position (1-based) */
+  /** Explicit row start (1-based). Omit to let the browser place the card. */
   row_start?: number;
-  /** Manual mode only: z-index for overlay stacking */
+  /** z-index, for deliberately overlapping cards. */
   z_index?: number;
-  /** Manual mode only: per-card CSS style overrides */
+  /** Per-card CSS style overrides. */
   styles?: CardStyles;
   /** Remove the sub-card's border (box-shadow + border-radius + border). */
   no_border?: boolean;
@@ -44,17 +44,16 @@ interface CardGridOptions {
 interface SubCardConfig {
   type: string;
   grid_options?: CardGridOptions;
+  /**
+   * Visibility conditions, identical in shape to HA's native card `visibility`.
+   * Evaluated by hui-card — we never interpret them ourselves.
+   */
+  visibility?: unknown[];
   [key: string]: unknown;
 }
 
-interface MosaicCardConfig {
+export interface MosaicCardConfig {
   type: string;
-  /**
-   * Layout mode.
-   * - "auto"   (default) — grid-auto-flow: dense, cards sized only
-   * - "manual" — every card has explicit column_start + row_start
-   */
-  mode?: "auto" | "manual";
   /**
    * Number of equal-width columns in the grid.
    * Defaults to the mosaic card's own HA grid size (getGridOptions().columns = 12).
@@ -66,17 +65,23 @@ interface MosaicCardConfig {
   /** Gap between rows in px. Default 8. */
   row_gap?: number;
   /**
-   * Auto-flow mode. Only applies when mode = "auto".
-   * Controls CSS grid-auto-flow. Default "dense".
-   */
-  auto_flow?: "dense" | "row" | "column";
-  /**
    * Row subdivision factor. Splits the standard 56px HA row into finer units:
    * 1 → 56px rows, 2 → 28px rows, 4 → 14px rows. Default 1.
    */
   row_subdivision?: 1 | 2 | 4;
   /** Title displayed above the grid. */
   title?: string;
+  /**
+   * Whether the card is *visually* a card — background, border and shadow from
+   * the theme. Default true. Setting it false makes the ha-card transparent and
+   * borderless (for a mosaic nested inside another card); the ha-card element
+   * itself is always rendered either way, so themes and card-mod always apply.
+   */
+  background?: boolean;
+  /** Padding inside the card, in px. */
+  card_padding?: number;
+  /** Extra CSS declarations for the card, e.g. a gradient or custom radius. */
+  card_css?: string;
   /** Strip card borders from sub-cards. Default true. */
   strip_borders?: boolean;
   cards?: SubCardConfig[];
@@ -101,17 +106,25 @@ interface LovelaceSectionConfig {
   [key: string]: unknown;
 }
 
-interface HACardElement extends HTMLElement {
-  setConfig(config: Record<string, unknown>): void;
+/**
+ * HA's own `hui-card` wrapper element (src/panels/lovelace/cards/hui-card.ts).
+ *
+ * It is what HA's views and sections use to host a card, and it handles all of
+ * the fiddly parts for us: creating the element (incl. error cards), `ll-rebuild`
+ * / `ll-upgrade`, delivering hass *before* the element is attached, and — the
+ * reason we use it — evaluating `config.visibility` via `checkConditionsMet()`
+ * with live listeners for screen/time conditions. When conditions fail it sets
+ * `display: none` + the `hidden` attribute on itself and detaches the child.
+ */
+interface HuiCardElement extends HTMLElement {
+  config?: Record<string, unknown>;
   hass?: unknown;
-  getCardSize?(): number;
-  getGridOptions?(): HAGridOptions;
-  /** LitElement method — absent until the custom element definition loads. */
-  requestUpdate?(): void;
-}
-
-interface CardHelpers {
-  createCardElement(config: Record<string, unknown>): HACardElement;
+  preview?: boolean;
+  /** Builds the inner card element immediately instead of on first update. */
+  load?(): void;
+  getCardSize?(): number | Promise<number>;
+  /** Grid options reported by the inner card itself (not from config). */
+  getElementGridOptions?(): HAGridOptions;
 }
 
 interface CustomCardEntry {
@@ -123,8 +136,53 @@ interface CustomCardEntry {
 declare global {
   interface Window {
     customCards?: CustomCardEntry[];
-    loadCardHelpers?(): Promise<CardHelpers>;
   }
+}
+
+// ── Shared grid geometry ──────────────────────────────────────────────────────
+
+/**
+ * Last grid row occupied by any card. Cards without an explicit `row_start` are
+ * auto-placed by the browser and cannot be accounted for here, so they are
+ * skipped; `grid-auto-rows` covers whatever they spill into.
+ */
+export function maxUsedRow(config: MosaicCardConfig): number {
+  let max = 0;
+  for (const card of config.cards ?? []) {
+    const g = card.grid_options;
+    if (!g || g.row_start === undefined) continue;
+    const end = g.row_start + (g.rows ?? 1) - 1;
+    if (end > max) max = end;
+  }
+  return max;
+}
+
+/**
+ * How many rows the grid actually renders.
+ *
+ * The editor's drag overlay MUST use this too: it divides the overlay into this
+ * many bands, so if it disagrees with the card every handle lands in the wrong
+ * place. That is why this lives here as a shared function rather than being
+ * reimplemented on both sides.
+ *
+ * `grid_options.rows` is "auto" whenever HA sizes the card to its content, in
+ * which case the declared count is only a starting point — cards placed past it
+ * would otherwise land in content-sized implicit rows.
+ */
+export function effectiveRowCount(config: MosaicCardConfig): number {
+  const used = maxUsedRow(config);
+
+  // NOTE: grid_options.rows is deliberately NOT consulted. It belongs to HA and
+  // is measured in HA rows (56px); ours are subdivided (56/row_subdivision).
+  // Writing our count there made HA reserve 19*56px for a grid we drew at
+  // 19*22px — ~790px of dead space per card. grid_options.rows now only affects
+  // what HA reserves; the internal grid is ours alone.
+  if (typeof config.rows === "number") return Math.max(config.rows, used);
+
+  // Nothing declared: fit the content exactly. A fixed fallback here is what
+  // left short cards padded with empty rows. It still applies when no card has
+  // an explicit row_start, since then there is nothing to measure.
+  return used > 0 ? used : 8;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -133,9 +191,15 @@ declare global {
 export class MosaicCard extends LitElement {
   @property({ attribute: false }) public hass?: unknown;
   @property({ attribute: false }) public sectionConfig?: LovelaceSectionConfig;
+  /**
+   * Set by HA (and by our editor's preview) while the dashboard is in edit mode.
+   * Forwarded to every hui-card, which then ignores visibility conditions so
+   * conditionally-hidden cards stay visible and editable.
+   */
+  @property({ attribute: false }) public preview = false;
 
   @state() private _config?: MosaicCardConfig;
-  @state() private _cardElements: HACardElement[] = [];
+  @state() private _cardElements: HuiCardElement[] = [];
 
   // ── Styles ──────────────────────────────────────────────────────────────────
 
@@ -164,6 +228,16 @@ export class MosaicCard extends LitElement {
         min-width: 0;
         min-height: 0;
         position: relative;
+      }
+
+      /*
+       * hui-card sets the "hidden" attribute on itself when a card's visibility
+       * conditions are not met. Collapse the wrapper too, so the cell is freed
+       * for dense auto-flow instead of leaving a hole. Mirrors how HA's own
+       * hui-grid-section hides cards.
+       */
+      .mosaic-grid > .card-wrapper:has(> hui-card[hidden]) {
+        display: none;
       }
 
       /*
@@ -196,16 +270,12 @@ export class MosaicCard extends LitElement {
   }
 
   protected updated(changedProperties: PropertyValues): void {
-    // Forward hass to all child card elements whenever it changes.
+    // hui-card is reactive on both — just forward and let it do the work.
     if (changedProperties.has("hass") && this.hass !== undefined) {
-      const firstHass = changedProperties.get("hass") === undefined;
-      for (const el of this._cardElements) {
-        el.hass = this.hass;
-        // Some cards have a non-reactive hass setter (e.g. mushroom-chips-card)
-        // and stay blank forever if their first render ran without hass —
-        // force one update when hass first arrives.
-        if (firstHass) el.requestUpdate?.();
-      }
+      for (const el of this._cardElements) el.hass = this.hass;
+    }
+    if (changedProperties.has("preview")) {
+      for (const el of this._cardElements) el.preview = this.preview;
     }
   }
 
@@ -218,47 +288,29 @@ export class MosaicCard extends LitElement {
       return;
     }
 
-    const helpers = await window.loadCardHelpers?.();
-    if (!helpers) {
-      console.error("mosaic-card: window.loadCardHelpers is not available");
-      return;
+    // hui-card ships with the Lovelace frontend chunk, which is always loaded by
+    // the time a custom card renders. Awaiting it costs nothing in practice and
+    // guards against being instantiated outside a dashboard.
+    if (!customElements.get("hui-card")) {
+      await customElements.whenDefined("hui-card");
     }
 
-    const elements: HACardElement[] = cards.map((cardConfig) =>
-      this._createCardElement(helpers, cardConfig),
+    this._cardElements = cards.map((cardConfig) =>
+      this._createCardElement(cardConfig),
     );
-
-    this._cardElements = elements;
   }
 
-  private _createCardElement(
-    helpers: CardHelpers,
-    cardConfig: SubCardConfig,
-  ): HACardElement {
-    // Strip our own grid_options before passing config to the sub-card.
+  private _createCardElement(cardConfig: SubCardConfig): HuiCardElement {
+    // Strip our own grid_options — hui-card would otherwise report them as the
+    // card's grid options, and the sub-card has no use for them.
     const { grid_options: _stripped, ...subConfig } = cardConfig;
-    const el = helpers.createCardElement(subConfig as Record<string, unknown>);
-    if (this.hass !== undefined) {
-      el.hass = this.hass;
-      // createCardElement calls setConfig before we can deliver hass; cards
-      // with a non-reactive hass setter would otherwise first-render blank.
-      el.requestUpdate?.();
-    }
-    // HA fires ll-rebuild on an element when its (lazily loaded) custom element
-    // definition arrives after creation, or when the card wants to be recreated.
-    // Containers must recreate the child, or cards created before their JS
-    // loaded stay permanently blank (e.g. mushroom cards in the editor preview).
-    el.addEventListener("ll-rebuild", (ev) => {
-      ev.stopPropagation();
-      const index = this._cardElements.indexOf(el);
-      if (index === -1) return;
-      const replacement = this._createCardElement(helpers, cardConfig);
-      this._cardElements = [
-        ...this._cardElements.slice(0, index),
-        replacement,
-        ...this._cardElements.slice(index + 1),
-      ];
-    });
+    const el = document.createElement("hui-card") as HuiCardElement;
+    el.config = subConfig as Record<string, unknown>;
+    el.preview = this.preview;
+    if (this.hass !== undefined) el.hass = this.hass;
+    // Build the inner element now so _resolveGridOptions can read its native
+    // grid options during this render pass rather than one frame late.
+    el.load?.();
     return el;
   }
 
@@ -270,7 +322,7 @@ export class MosaicCard extends LitElement {
    */
   private _resolveGridOptions(
     cardConfig: SubCardConfig,
-    element: HACardElement,
+    element: HuiCardElement,
   ): Required<Pick<CardGridOptions, "columns" | "rows">> & CardGridOptions {
     if (cardConfig.grid_options) {
       return {
@@ -281,7 +333,9 @@ export class MosaicCard extends LitElement {
     }
 
     // Fall back to the sub-card's own HA grid options (native defaults).
-    const native = element.getGridOptions?.();
+    // getElementGridOptions() asks the inner card only — getGridOptions() would
+    // merge in config values we already handled above.
+    const native = element.getElementGridOptions?.();
     return {
       columns: typeof native?.columns === "number" ? native.columns : 2,
       rows: typeof native?.rows === "number" ? native.rows : 1,
@@ -291,10 +345,11 @@ export class MosaicCard extends LitElement {
   /** Build the inline style string for the .mosaic-grid container. */
   private _containerStyle(): string {
     const cfg = this._config!;
-    const mode = cfg.mode ?? "auto";
-    // grid_options.rows can be "auto" (HA Layout tab) — only numeric values are usable.
-    const gridRows = cfg.grid_options?.rows;
-    const rows = typeof gridRows === "number" ? gridRows : cfg.rows ?? 8;
+    // A card can be placed past the declared row count. CSS Grid then invents
+    // *implicit* rows for it, and those are sized by content rather than by our
+    // fixed row height — which is what makes an auto-height mosaic balloon.
+    // effectiveRowCount extends the track list to cover what the cards use.
+    const rows = effectiveRowCount(cfg);
     const colGap = cfg.column_gap ?? 8;
     const rowGap = cfg.row_gap ?? 8;
 
@@ -320,12 +375,11 @@ export class MosaicCard extends LitElement {
       `grid-template-columns: repeat(${columns}, 1fr)`,
       `gap: ${rowGap}px ${colGap}px`,
       `grid-template-rows: repeat(${rows}, ${rowSize.toFixed(3)}px)`,
+      // Cards without explicit placement are auto-placed and can spill past the
+      // explicit tracks. Pin any implicit row to the same height so it can
+      // never be content-sized.
+      `grid-auto-rows: ${rowSize.toFixed(3)}px`,
     ];
-
-    if (mode === "auto") {
-      const autoFlow = cfg.auto_flow ?? "dense";
-      parts.push(`grid-auto-flow: ${autoFlow}`);
-    }
 
     return parts.join("; ");
   }
@@ -333,26 +387,31 @@ export class MosaicCard extends LitElement {
   /** Build the inline style string for a single card wrapper. */
   private _cardStyle(
     opts: ReturnType<typeof this._resolveGridOptions>,
-    mode: "auto" | "manual",
   ): string {
     const colSpan = opts.columns ?? 2;
     const rowSpan = opts.rows ?? 1;
     const parts: string[] = [];
 
-    if (mode === "auto") {
-      parts.push(`grid-column: span ${colSpan}`);
-      parts.push(`grid-row: span ${rowSpan}`);
-    } else {
-      const colStart = opts.column_start ?? 1;
-      const rowStart = opts.row_start ?? 1;
-      parts.push(`grid-column: ${colStart} / span ${colSpan}`);
-      parts.push(`grid-row: ${rowStart} / span ${rowSpan}`);
-      if (opts.z_index !== undefined) {
-        parts.push(`z-index: ${opts.z_index}`);
-      }
+    // Placement is per-card, not a card-wide mode: a card with an explicit
+    // start is pinned there, one without is auto-placed into the next free
+    // slot. That keeps freshly added cards from all stacking on cell 1,1.
+    const colStart = opts.column_start;
+    const rowStart = opts.row_start;
+    parts.push(
+      colStart !== undefined
+        ? `grid-column: ${colStart} / span ${colSpan}`
+        : `grid-column: span ${colSpan}`,
+    );
+    parts.push(
+      rowStart !== undefined
+        ? `grid-row: ${rowStart} / span ${rowSpan}`
+        : `grid-row: span ${rowSpan}`,
+    );
+    if (opts.z_index !== undefined) {
+      parts.push(`z-index: ${opts.z_index}`);
     }
 
-    // Per-card style overrides (manual mode feature, but applied regardless)
+    // Per-card style overrides
     const s = opts.styles;
     if (s) {
       if (s.pointer_events !== undefined)
@@ -382,11 +441,10 @@ export class MosaicCard extends LitElement {
       return html``;
     }
 
-    const mode = this._config.mode ?? "auto";
     const title = this._config.title;
     const stripBorders = this._config.strip_borders !== false;
 
-    return html`
+    const content = html`
       ${title ? html`<div class="mosaic-title">${title}</div>` : ""}
       <div
         class="mosaic-grid ${stripBorders ? "strip-borders" : ""}"
@@ -396,13 +454,41 @@ export class MosaicCard extends LitElement {
           const cardConfig = this._config!.cards![i];
           const opts = this._resolveGridOptions(cardConfig, el);
           return html`
-            <div class="card-wrapper" style=${this._cardStyle(opts, mode)}>
+            <div class="card-wrapper" style=${this._cardStyle(opts)}>
               ${el}
             </div>
           `;
         })}
       </div>
     `;
+
+    // ha-card is ALWAYS rendered — it is the container every HA card uses, so
+    // this is what makes themes and card-mod's `ha-card { … }` selector apply to
+    // the mosaic like any other card. Hiding the background makes it
+    // transparent rather than removing it; a conditional element would mean
+    // card-mod silently working or not depending on an unrelated toggle.
+    return html`
+      <ha-card style=${this._cardStyleString()}>${content}</ha-card>
+    `;
+  }
+
+  /** Inline declarations for the ha-card. Inline beats :host, so these win. */
+  private _cardStyleString(): string {
+    const parts: string[] = [];
+
+    // Same approach as the per-sub-card no_border / no_background options:
+    // neutralise via the theme's own custom properties instead of overriding
+    // the rules, so anything the theme sets stays consistent.
+    if (this._config?.background === false) {
+      parts.push("--ha-card-background: transparent");
+      parts.push("--ha-card-box-shadow: none");
+      parts.push("--ha-card-border-width: 0px");
+    }
+
+    const padding = this._config?.card_padding;
+    if (typeof padding === "number") parts.push(`padding: ${padding}px`);
+    if (this._config?.card_css) parts.push(this._config.card_css);
+    return parts.join("; ");
   }
 
   // ── HA card API ─────────────────────────────────────────────────────────────
@@ -413,10 +499,10 @@ export class MosaicCard extends LitElement {
    */
   public getCardSize(): number {
     if (!this._cardElements.length) return 3;
-    return this._cardElements.reduce(
-      (total, el) => total + (el.getCardSize?.() ?? 1),
-      0,
-    );
+    return this._cardElements.reduce((total, el) => {
+      const size = el.getCardSize?.();
+      return total + (typeof size === "number" ? size : 1);
+    }, 0);
   }
 
   /**
@@ -440,7 +526,6 @@ export class MosaicCard extends LitElement {
   static getStubConfig(): MosaicCardConfig {
     return {
       type: "custom:mosaic-card",
-      mode: "auto",
       column_gap: 8,
       row_gap: 8,
       strip_borders: true,
