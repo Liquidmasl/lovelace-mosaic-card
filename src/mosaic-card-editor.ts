@@ -2,6 +2,8 @@ import { LitElement, html, css, CSSResultGroup, TemplateResult, nothing, Propert
 import { customElement, property, state } from "lit/decorators.js";
 import { createRef, ref, Ref } from "lit/directives/ref.js";
 import { keyed } from "lit/directives/keyed.js";
+import { effectiveRowCount } from "./mosaic-card";
+import type { MosaicCardConfig as MosaicCardRuntimeConfig } from "./mosaic-card";
 import type { GridSizeValue } from "./mosaic-grid-size-picker";
 import "./mosaic-grid-size-picker";
 
@@ -456,12 +458,14 @@ export class MosaicCardEditor extends LitElement {
     return this._config?.columns ?? 12;
   }
 
+  /**
+   * Shared with mosaic-card deliberately: the picker overlay divides itself
+   * into this many row bands, so any disagreement with what the card actually
+   * renders puts every handle in the wrong place.
+   */
   private _getInternalGridRows(): number {
-    const gridRows = this._config?.grid_options?.rows;
-    if (typeof gridRows === "number") return gridRows;
-    // Fallback must match mosaic-card's own default (8) or the picker overlay
-    // and the preview underneath it disagree about row geometry.
-    return this._config?.rows ?? 8;
+    if (!this._config) return 8;
+    return effectiveRowCount(this._config as unknown as MosaicCardRuntimeConfig);
   }
 
   private _getRowSubdivision(): number {

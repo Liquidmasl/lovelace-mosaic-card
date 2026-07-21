@@ -311,6 +311,24 @@ conditional would mean card-mod working or not depending on an unrelated toggle.
 ha-card; inline beats the `:host` rule carrying the theme defaults, so an empty
 `card_css` means "use the theme's card style".
 
+### Row count: `effectiveRowCount()` is shared, deliberately
+
+`effectiveRowCount(config)` is exported from `mosaic-card.ts` and used by **both**
+the card and the editor. The picker overlay divides itself into that many row
+bands, so any disagreement puts every handle in the wrong band — this is not a
+style preference, it is a correctness constraint. (It replaced two copies of the
+"rows ?? 8" fallback that silently drifted apart.)
+
+Rules it encodes:
+- `grid_options.rows` numeric, or `config.rows` set → that many rows, but never
+  fewer than the cards actually occupy.
+- Auto height with nothing declared → **fit the content** (`maxUsedRow`). The old
+  hardcoded 8 both padded short cards with empty rows and ballooned tall ones.
+- Cards placed past the explicit tracks land in *implicit* rows, which CSS Grid
+  sizes by **content**, not by our fixed row height — that is what made
+  auto-height mosaics balloon. `grid-auto-rows` is pinned to the same row height
+  as a backstop.
+
 ### Editor drag overlay must be measured, not assumed
 
 `mosaic-grid-size-picker[overlay]` is positioned from a measurement of the
