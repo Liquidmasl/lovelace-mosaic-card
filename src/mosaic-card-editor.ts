@@ -64,6 +64,9 @@ interface MosaicCardConfig {
   row_subdivision?: 1 | 2 | 4;
   title?: string;
   strip_borders?: boolean;
+  background?: boolean;
+  background_padding?: number;
+  background_css?: string;
   cards?: SubCardConfig[];
   grid_options?: HAGridOptions;
 }
@@ -713,6 +716,7 @@ export class MosaicCardEditor extends LitElement {
       >
         <div class="section layout-section">
           ${this._renderGridOptionsInfo()}
+          ${this._renderBackgroundFields()}
 
         <div class="field">
           <label>Mode</label>
@@ -835,6 +839,67 @@ export class MosaicCardEditor extends LitElement {
         </div>
       </ha-expansion-panel>
     `;
+  }
+
+  /**
+   * Renders the grid inside an ha-card. The declarations from the CSS field go
+   * inline on that ha-card, which beats the `:host` rule supplying the theme
+   * defaults — so an empty field means "look like a normal themed card", and a
+   * filled one overrides exactly what it mentions.
+   */
+  private _renderBackgroundFields(): TemplateResult {
+    const on = this._get("background") === true;
+    return html`
+      <div class="field inline-field">
+        <label>Background</label>
+        <ha-switch
+          .checked=${on}
+          @change=${(e: Event) =>
+            this._setValue("background", (e.target as HTMLInputElement).checked || undefined)}
+        ></ha-switch>
+      </div>
+      <div class="helper-text spaced">
+        Draws the mosaic on a real card, so it no longer needs to be nested in
+        another card to have a background.
+      </div>
+      ${on
+        ? html`
+            <div class="field">
+              <label>Padding (px)</label>
+              <ha-selector
+                .hass=${this.hass}
+                .selector=${{ number: { min: 0, max: 48, mode: "slider", step: 1, unit_of_measurement: "px" } }}
+                .value=${this._get("background_padding") ?? 0}
+                .configValue=${"background_padding"}
+                @value-changed=${this._valueChanged}
+              ></ha-selector>
+            </div>
+            <div class="field">
+              <label>Background CSS</label>
+              <ha-selector
+                .hass=${this.hass}
+                .selector=${{ text: { type: "text", multiline: true } }}
+                .value=${this._get("background_css") ?? ""}
+                @value-changed=${(e: CustomEvent) =>
+                  this._setValue("background_css", (e.detail as { value: string }).value || undefined)}
+              ></ha-selector>
+              <div class="helper-text">
+                CSS declarations applied to the card, e.g.
+                <code>border-radius: 20px; background: linear-gradient(...)</code>.
+                Leave empty to use the theme's card style.
+              </div>
+            </div>
+          `
+        : nothing}
+    `;
+  }
+
+  private _setValue(key: string, value: unknown): void {
+    if (!this._config) return;
+    const config: Record<string, unknown> = { ...this._config };
+    if (value === undefined) delete config[key];
+    else config[key] = value;
+    this._fireConfigChanged(config as unknown as MosaicCardConfig);
   }
 
   /** One-line summary so the collapsed Layout panel still says something useful. */
@@ -1111,6 +1176,10 @@ export class MosaicCardEditor extends LitElement {
         font-size: 0.75rem;
         color: var(--secondary-text-color);
         margin-top: 2px;
+      }
+
+      .helper-text.spaced {
+        margin-bottom: 14px;
       }
 
       /*
