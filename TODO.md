@@ -27,14 +27,28 @@ Current `mode: auto | manual` with `auto_flow: dense | row | column` is confusin
 
 The editor UI and `MosaicCardConfig` would need to be updated accordingly.
 
-### Visibility support
-Consider adding a `visible` field (or `hidden`) to `CardGridOptions` so individual cards can be conditionally hidden (e.g. via template or static boolean). Unclear if HA template evaluation is feasible here; at minimum a static boolean toggle in the editor would be useful.
+### `grid_options.rows` means two different things
+For a top-level mosaic it is HA's Layout-tab card height. For a mosaic nested
+inside another mosaic it is the *span in the parent's grid*, set by our own grid
+picker. `effectiveRowCount()` currently treats both as "number of rows in my own
+grid", which is right for the first and only coincidentally right for the second
+(it happens to work when parent and child use the same subdivision). Nested
+mosaics on the Home view show a one-row (22px) empty tail from this. Needs a
+decision on whether a nested mosaic's inner row count should be independent of
+its parent span.
 
-### New cards start tiny in the grid
-Cards added via the card picker get no `grid_options`, so `_resolveGridOptions` in `mosaic-card.ts` falls back to `columns: 2, rows: 1`. Fix: in the `config-changed` handler on the stack editor (`mosaic-card-editor.ts`), detect cards at index `>= existingCards.length` (newly added) and assign default `grid_options`. Default: `{ columns: 4, rows: 2 }` for auto mode; `{ columns: 4, rows: 2, column_start: 1, row_start: 1 }` for manual mode.
+### Auto mode still uses a fixed 8-row canvas under auto height
+`maxUsedRow` only works in manual mode — auto-mode placement is decided by the
+browser, so an auto-mode mosaic with auto height still declares 8 rows and can
+show an empty tail. Fixing it probably means dropping `grid-template-rows`
+entirely in that combination and letting `grid-auto-rows` create exactly the
+rows needed.
 
-### Hide title field in the Cards (card picker) section
-The vertical-stack editor element we embed shows a "Title" input at the top. It should be hidden. Options:
-- Inject `<style>` into the stack editor's shadow root after `getConfigElement()` returns
-- Target `ha-textfield` or similar — inspect the exact element to find a stable selector
-- CSS: `editor.shadowRoot.querySelector('ha-textfield')?.style.display = 'none'` (fragile but quick)
+---
+
+## Done
+
+- **Visibility support** — implemented as native HA `visibility` conditions per sub-card, using `hui-card` for evaluation and HA's own editor UI. Superseded the originally proposed static boolean.
+- **New cards start tiny in the grid** — the editor owns the add path now and assigns mode-aware default `grid_options` in `defaultGridOptions()`.
+- **Hide title field in the Cards section** — moot: the embedded vertical-stack editor is gone, replaced by `hui-card-picker` + `hui-card-element-editor` driven by the sidebar selection.
+- **Card background / no more wrapper card** — the mosaic always renders an `ha-card`; `background: false` makes it transparent rather than removing it. Nesting a mosaic in `vertical-stack-in-card` purely to get a background (and to give card-mod something to target) is no longer needed.

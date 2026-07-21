@@ -95,12 +95,24 @@ win.customCards.push({ type: "mosaic-card", name: "Mosaic Card", description: ".
 - `hass` property typed as `Record<string, unknown>` (broaden as needed, HA types not vendored)
 - TypeScript `noUnusedLocals`, `noUnusedParameters`, `noImplicitReturns` all enabled — compiler is strict
 
+### Manual placement only — there is no "auto mode"
+
+`mode` and `auto_flow` were removed: the card is about deliberate placement.
+Placement is now decided **per card**, not card-wide — a sub-card with an
+explicit `column_start`/`row_start` is pinned there, one without is auto-placed
+into the next free slot by CSS Grid. New cards from the picker get
+`row_start: maxUsedRow + 1` so they land below existing content instead of
+stacking on cell 1,1.
+
 ### Column count: where it comes from (non-obvious)
 
 `mosaic-card-editor._getInternalGridColumns()` reads columns in priority order:
 1. `config.grid_options.columns` — set by HA's native "Layout" tab when user resizes the card in the dashboard
 2. `config.columns` — the mosaic card's own explicit columns field
 3. Default: `12`
+
+`grid_options.rows` is deliberately NOT read for the internal row count — see
+the row-count section below; the two use different units.
 
 There is **no columns slider** in the editor GUI. Column count changes come from HA's native card-size editor, which calls `setConfig()` on the editor. There IS a Rows slider (because HA's native editor caps rows at 8).
 
@@ -229,12 +241,117 @@ When a topic needs more detail than a few bullets, create a dedicated file under
 - Preview `mosaic-card` carries the `inert` attribute — `pointer-events: none` alone is NOT enough, sub-cards that set pointer-events internally punch through it.
 - Editor's rows fallback must equal mosaic-card's fallback (8), or the picker overlay geometry disagrees with the preview grid.
 
-### Deploying a dev build to Marcel's live HA (fast loop, preferred over test container)
+### Dev loop against Marcel's live HA — **preferred: the 5173 dev server**
 
+HA has a Lovelace resource `http://192.168.0.10:5173/mosaic-card.js` (Marcel's dev
+machine) listed **before** the HACS resource. Serve that port and the dev build
+wins — no scp, no gzip, no HA restart:
+
+```bash
+npm run dev:serve   # scripts/dev-server.mjs — serves dist/ on 0.0.0.0:5173
+npm run watch       # second terminal: rebuild on save (no terser)
+```
+
+Then hard-refresh the browser. That's the whole loop.
+
+- `scripts/dev-server.mjs` is zero-dependency. Two headers are load-bearing:
+  **`Access-Control-Allow-Origin: *`** (HA loads it as a *cross-origin* ES module —
+  without CORS it fails silently: blank card, error only in console) and
+  **`Cache-Control: no-store`** (else the browser serves a stale build).
+- Verify reachability from HA itself, not just locally:
+  `ssh homeassistant "wget -S -qO- http://192.168.0.10:5173/mosaic-card.js"`
+- **Both resources define `mosaic-card`, and it is a RACE — not a guaranteed
+  shadow.** Whichever module executes first wins; the loser throws "already
+  defined" and stops evaluating. `/hacsfiles/` is served locally by HA and
+  gzipped, so it often beats the cross-network 5173 fetch — the winner can
+  differ per device and per page load. Symptom: stale build appears "everywhere
+  again", especially on phones/other machines, while the dev machine looks fine.
+  **Fix: keep the HACS-path file in sync** (scp + gzip, see fallback below)
+  whenever testing from more than one device, so whichever wins is current.
+  A console "already defined" error is expected and is *not* evidence of a bug.
+- Stray resource `/local/mosaic-carddd.js` — dead, harmless.
+
+**Fallback (dev server not running):** copy straight into HACS's folder.
 - SSH host `homeassistant` (192.168.0.45, root) — card lives at `/homeassistant/www/community/lovelace-mosaic-card/mosaic-card.js`
 - **Must also regenerate `mosaic-card.js.gz`** next to it (`gzip -9 -kf`) — HA serves the stale .gz otherwise
 - Cache-bust in browser: `fetch(resourceUrl, {cache:"reload"})` then `location.reload()` — resource URL has a `?hacstag=` query, normal reload serves from cache
-- There is a dead Lovelace resource `http://192.168.0.10:5173/mosaic-card.js` (old Vite dev workflow) and a stray `/local/mosaic-carddd.js` — both fail to load and are harmless today, but the 5173 one will shadow the HACS resource if anything ever serves that port
+- This leaves a dev build in the HACS folder until the next HACS update overwrites it
+
+### Borrowing HA's card editor internals (mosaic-card-editor.ts)
+
+The editor composes HA's own elements instead of embedding the vertical-stack
+editor. One sidebar selection (`_selectedCardIndex`) drives the position grid,
+the per-card settings, and the card editor.
+
+- **`hui-card-element-editor`** — per-card editor. `.hass` / `.lovelace` /
+  `.value`; fires `config-changed` + `GUImode-changed`; has `toggleMode()`.
+  Setting `show-visibility-tab` gives the native Config|Visibility tabs, so we
+  do **not** hand-roll a visibility section.
+- **Do NOT pass `sectionConfig`** to it — that switches on HA's Layout tab,
+  which edits `grid_options` against a *section* grid and fights our own
+  position picker. Omitting it hides the tab (`_showLayoutTab` requires it).
+- **`keyed()` is mandatory** around it, with a stable key per
+  `(index, cards.length)` — see `_editorKey()`. Without it the element is reused
+  across selection changes and keeps the previous card's internal state
+  (config element, GUI/YAML mode, errors). This is the failure mode that makes
+  an embedded editor look broken for no visible reason.
+- **`hui-card-picker` is NOT in the edit-card chunk.** It ships with the
+  *create*-card dialog, so inside our editor it is normally undefined and
+  `whenDefined()` alone hangs forever. `hui-stack-card-editor` imports it, so
+  `hui-vertical-stack-card.getConfigElement()` pulls the chunk in as a side
+  effect; the returned element is discarded. See `_ensureCardPicker()`, which
+  defers this until the user actually opens the picker.
+- Gate the two elements on **separate** readiness flags — requiring both before
+  rendering anything hides the whole section, since the picker usually isn't
+  loaded.
+
+### The card always renders an `ha-card`
+
+`mosaic-card.render()` always wraps the grid in `ha-card` — the container every
+HA card uses. `background: false` (default is true) does **not** remove it; it
+sets `--ha-card-background: transparent`, `--ha-card-box-shadow: none` and
+`--ha-card-border-width: 0`, the same neutralise-via-custom-properties trick the
+per-sub-card `no_border` / `no_background` options use.
+
+Why it must be unconditional: `card-mod` styles a card by targeting
+`ha-card { … }` inside its shadow root. With no `ha-card` the selector matches
+nothing and card-mod **silently does nothing** — which is why mosaics used to be
+nested inside `vertical-stack-in-card` purely to borrow one. Making the element
+conditional would mean card-mod working or not depending on an unrelated toggle.
+
+`card_padding` (px) and `card_css` (raw declarations) are applied inline on the
+ha-card; inline beats the `:host` rule carrying the theme defaults, so an empty
+`card_css` means "use the theme's card style".
+
+### Row count: `effectiveRowCount()` is shared, deliberately
+
+`effectiveRowCount(config)` is exported from `mosaic-card.ts` and used by **both**
+the card and the editor. The picker overlay divides itself into that many row
+bands, so any disagreement puts every handle in the wrong band — this is not a
+style preference, it is a correctness constraint. (It replaced two copies of the
+"rows ?? 8" fallback that silently drifted apart.)
+
+Rules it encodes:
+- `grid_options.rows` numeric, or `config.rows` set → that many rows, but never
+  fewer than the cards actually occupy.
+- Auto height with nothing declared → **fit the content** (`maxUsedRow`). The old
+  hardcoded 8 both padded short cards with empty rows and ballooned tall ones.
+- Cards placed past the explicit tracks land in *implicit* rows, which CSS Grid
+  sizes by **content**, not by our fixed row height — that is what made
+  auto-height mosaics balloon. `grid-auto-rows` is pinned to the same row height
+  as a backstop.
+
+### Editor drag overlay must be measured, not assumed
+
+`mosaic-grid-size-picker[overlay]` is positioned from a measurement of the
+rendered `.mosaic-grid`, not `inset: 0` on the preview container — the ha-card's
+border and `card_padding` inset the grid, and `card_css` can inset it
+arbitrarily. See `_updateOverlayGeometry()`. Two gotchas:
+- Read both rects with `getBoundingClientRect()`; that is screen space, so the
+  preview's `zoom` is already accounted for.
+- Subtract `container.clientTop` / `clientLeft`. Absolute positioning is relative
+  to the padding box while `getBoundingClientRect` measures the border box —
+  forgetting this leaves a constant 1px offset.
 
 ### Grid picker drag constraints (mosaic-grid-size-picker.ts)
 
