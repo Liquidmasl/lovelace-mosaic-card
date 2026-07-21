@@ -65,8 +65,8 @@ interface MosaicCardConfig {
   title?: string;
   strip_borders?: boolean;
   background?: boolean;
-  background_padding?: number;
-  background_css?: string;
+  card_padding?: number;
+  card_css?: string;
   cards?: SubCardConfig[];
   grid_options?: HAGridOptions;
 }
@@ -184,6 +184,8 @@ export class MosaicCardEditor extends LitElement {
   private _editorKeys = new Map<string, string>();
   private _pickerLoading = false;
   @state() private _previewScale = 1;
+  /** Inline geometry for the drag overlay, measured from the rendered grid. */
+  @state() private _overlayGeometry = "inset: 0;";
 
   // ── Preview scaling ──────────────────────────────────────────────────────────
 
@@ -205,10 +207,34 @@ export class MosaicCardEditor extends LitElement {
     return Math.round(sectionW * (span / 12));
   }
 
+  /**
+   * Position the drag overlay over the *grid*, not the preview container. The
+   * ha-card's border and padding inset the grid, and card_css can inset it by
+   * an arbitrary amount, so measuring is the only thing that stays correct.
+   * Both rects are read in screen space, which already accounts for the
+   * preview's zoom.
+   */
+  private _updateOverlayGeometry(): void {
+    const container = this._previewContainerRef.value;
+    const grid = this._previewRef.value?.shadowRoot?.querySelector(".mosaic-grid");
+    if (!container || !grid) return;
+    const c = container.getBoundingClientRect();
+    const g = grid.getBoundingClientRect();
+    if (!g.width || !g.height) return;
+    // Absolute positioning is relative to the container's padding box, while
+    // getBoundingClientRect measures its border box — clientTop/Left are exactly
+    // the border widths that differ between the two.
+    const top = g.top - c.top - container.clientTop;
+    const left = g.left - c.left - container.clientLeft;
+    const next = `top: ${top}px; left: ${left}px; width: ${g.width}px; height: ${g.height}px;`;
+    if (next !== this._overlayGeometry) this._overlayGeometry = next;
+  }
+
   private _updatePreviewScale(): void {
     const container = this._previewContainerRef.value;
     if (!container) return;
     this._previewScale = Math.min(1, container.clientWidth / this._naturalPreviewWidth());
+    this._updateOverlayGeometry();
     // The natural width follows the live section, which can resize without the
     // container changing (viewport resize, sidebar toggle) — watch it too.
     const section = this._liveSection;
@@ -559,6 +585,7 @@ export class MosaicCardEditor extends LitElement {
           ${selectedCard ? html`
             <mosaic-grid-size-picker
               overlay
+              style=${this._overlayGeometry}
               .mode=${mode as "auto" | "manual"}
               .gridColumns=${gridColumns}
               .gridRows=${gridRows}
@@ -842,55 +869,55 @@ export class MosaicCardEditor extends LitElement {
   }
 
   /**
-   * Renders the grid inside an ha-card. The declarations from the CSS field go
-   * inline on that ha-card, which beats the `:host` rule supplying the theme
-   * defaults — so an empty field means "look like a normal themed card", and a
-   * filled one overrides exactly what it mentions.
+   * The mosaic always renders an ha-card; this toggle only controls whether it
+   * *looks* like one. The CSS declarations go inline on that ha-card, which
+   * beats the `:host` rule supplying the theme defaults — so an empty field
+   * means "use the theme's card style" and a filled one overrides exactly what
+   * it names.
    */
   private _renderBackgroundFields(): TemplateResult {
-    const on = this._get("background") === true;
+    const on = this._get("background") !== false;
     return html`
       <div class="field inline-field">
-        <label>Background</label>
+        <label>Card background</label>
         <ha-switch
           .checked=${on}
-          @change=${(e: Event) =>
-            this._setValue("background", (e.target as HTMLInputElement).checked || undefined)}
+          @change=${(e: Event) => {
+            const checked = (e.target as HTMLInputElement).checked;
+            // Default is on, so only the "off" case needs storing.
+            this._setValue("background", checked ? undefined : false);
+          }}
         ></ha-switch>
       </div>
       <div class="helper-text spaced">
-        Draws the mosaic on a real card, so it no longer needs to be nested in
-        another card to have a background.
+        ${on
+          ? "Background, border and shadow from your theme, like any other card."
+          : "Transparent and borderless — for a mosaic nested inside another card."}
       </div>
-      ${on
-        ? html`
-            <div class="field">
-              <label>Padding (px)</label>
-              <ha-selector
-                .hass=${this.hass}
-                .selector=${{ number: { min: 0, max: 48, mode: "slider", step: 1, unit_of_measurement: "px" } }}
-                .value=${this._get("background_padding") ?? 0}
-                .configValue=${"background_padding"}
-                @value-changed=${this._valueChanged}
-              ></ha-selector>
-            </div>
-            <div class="field">
-              <label>Background CSS</label>
-              <ha-selector
-                .hass=${this.hass}
-                .selector=${{ text: { type: "text", multiline: true } }}
-                .value=${this._get("background_css") ?? ""}
-                @value-changed=${(e: CustomEvent) =>
-                  this._setValue("background_css", (e.detail as { value: string }).value || undefined)}
-              ></ha-selector>
-              <div class="helper-text">
-                CSS declarations applied to the card, e.g.
-                <code>border-radius: 20px; background: linear-gradient(...)</code>.
-                Leave empty to use the theme's card style.
-              </div>
-            </div>
-          `
-        : nothing}
+      <div class="field">
+        <label>Padding (px)</label>
+        <ha-selector
+          .hass=${this.hass}
+          .selector=${{ number: { min: 0, max: 48, mode: "slider", step: 1, unit_of_measurement: "px" } }}
+          .value=${this._get("card_padding") ?? 0}
+          .configValue=${"card_padding"}
+          @value-changed=${this._valueChanged}
+        ></ha-selector>
+      </div>
+      <div class="field">
+        <label>Card CSS</label>
+        <ha-selector
+          .hass=${this.hass}
+          .selector=${{ text: { type: "text", multiline: true } }}
+          .value=${this._get("card_css") ?? ""}
+          @value-changed=${(e: CustomEvent) =>
+            this._setValue("card_css", (e.detail as { value: string }).value || undefined)}
+        ></ha-selector>
+        <div class="helper-text">
+          CSS declarations applied to the card, e.g.
+          <code>border-radius: 20px; background: linear-gradient(...)</code>.
+        </div>
+      </div>
     `;
   }
 

@@ -83,16 +83,16 @@ interface MosaicCardConfig {
   /** Title displayed above the grid. */
   title?: string;
   /**
-   * Render the grid inside an `ha-card`, giving it the standard card
-   * background, border and radius. Off by default — a bare grid is what a
-   * mosaic nested inside another card wants, and enabling it by default would
-   * change every existing dashboard.
+   * Whether the card is *visually* a card — background, border and shadow from
+   * the theme. Default true. Setting it false makes the ha-card transparent and
+   * borderless (for a mosaic nested inside another card); the ha-card element
+   * itself is always rendered either way, so themes and card-mod always apply.
    */
   background?: boolean;
-  /** Padding inside the ha-card, in px. Only applies when `background` is on. */
-  background_padding?: number;
-  /** Extra CSS declarations for the ha-card, e.g. a gradient or custom radius. */
-  background_css?: string;
+  /** Padding inside the card, in px. */
+  card_padding?: number;
+  /** Extra CSS declarations for the card, e.g. a gradient or custom radius. */
+  card_css?: string;
   /** Strip card borders from sub-cards. Default true. */
   strip_borders?: boolean;
   cards?: SubCardConfig[];
@@ -423,25 +423,32 @@ export class MosaicCard extends LitElement {
       </div>
     `;
 
-    // Opt-in: without this the card renders bare, which is the long-standing
-    // behaviour and what mosaics nested inside other cards want. Turning it on
-    // gives the grid a real ha-card — the same element every other HA card
-    // renders — so it gets a background and border without being wrapped in a
-    // stack card just to borrow one. It also makes card-mod's `ha-card { … }`
-    // selector apply to this card directly.
-    if (!this._config.background) return content;
-
+    // ha-card is ALWAYS rendered — it is the container every HA card uses, so
+    // this is what makes themes and card-mod's `ha-card { … }` selector apply to
+    // the mosaic like any other card. Hiding the background makes it
+    // transparent rather than removing it; a conditional element would mean
+    // card-mod silently working or not depending on an unrelated toggle.
     return html`
-      <ha-card style=${this._backgroundStyle()}>${content}</ha-card>
+      <ha-card style=${this._cardStyleString()}>${content}</ha-card>
     `;
   }
 
-  /** Extra CSS declarations for the ha-card wrapper (background mode only). */
-  private _backgroundStyle(): string {
+  /** Inline declarations for the ha-card. Inline beats :host, so these win. */
+  private _cardStyleString(): string {
     const parts: string[] = [];
-    const padding = this._config?.background_padding;
+
+    // Same approach as the per-sub-card no_border / no_background options:
+    // neutralise via the theme's own custom properties instead of overriding
+    // the rules, so anything the theme sets stays consistent.
+    if (this._config?.background === false) {
+      parts.push("--ha-card-background: transparent");
+      parts.push("--ha-card-box-shadow: none");
+      parts.push("--ha-card-border-width: 0px");
+    }
+
+    const padding = this._config?.card_padding;
     if (typeof padding === "number") parts.push(`padding: ${padding}px`);
-    if (this._config?.background_css) parts.push(this._config.background_css);
+    if (this._config?.card_css) parts.push(this._config.card_css);
     return parts.join("; ");
   }
 

@@ -27,15 +27,6 @@ Current `mode: auto | manual` with `auto_flow: dense | row | column` is confusin
 
 The editor UI and `MosaicCardConfig` would need to be updated accordingly.
 
-### Should `background` be the default?
-`ha-card` is what every other HA card renders, so arguably the mosaic should too,
-with an opt-*out* for the nested case rather than today's opt-in. Blocked on the
-migration question: flipping the default puts a card background under every
-existing mosaic on every dashboard, including ones deliberately nested inside
-another card. Would need either a version bump with release notes, or a heuristic
-(e.g. default on only when the card is a direct child of a view/section) — and a
-heuristic that guesses wrong is worse than an explicit flag.
-
 ---
 
 ## Done
@@ -43,3 +34,4 @@ heuristic that guesses wrong is worse than an explicit flag.
 - **Visibility support** — implemented as native HA `visibility` conditions per sub-card, using `hui-card` for evaluation and HA's own editor UI. Superseded the originally proposed static boolean.
 - **New cards start tiny in the grid** — the editor owns the add path now and assigns mode-aware default `grid_options` in `defaultGridOptions()`.
 - **Hide title field in the Cards section** — moot: the embedded vertical-stack editor is gone, replaced by `hui-card-picker` + `hui-card-element-editor` driven by the sidebar selection.
+- **Card background / no more wrapper card** — the mosaic always renders an `ha-card`; `background: false` makes it transparent rather than removing it. Nesting a mosaic in `vertical-stack-in-card` purely to get a background (and to give card-mod something to target) is no longer needed.
