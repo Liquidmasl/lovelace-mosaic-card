@@ -82,6 +82,17 @@ interface MosaicCardConfig {
   row_subdivision?: 1 | 2 | 4;
   /** Title displayed above the grid. */
   title?: string;
+  /**
+   * Render the grid inside an `ha-card`, giving it the standard card
+   * background, border and radius. Off by default — a bare grid is what a
+   * mosaic nested inside another card wants, and enabling it by default would
+   * change every existing dashboard.
+   */
+  background?: boolean;
+  /** Padding inside the ha-card, in px. Only applies when `background` is on. */
+  background_padding?: number;
+  /** Extra CSS declarations for the ha-card, e.g. a gradient or custom radius. */
+  background_css?: string;
   /** Strip card borders from sub-cards. Default true. */
   strip_borders?: boolean;
   cards?: SubCardConfig[];
@@ -394,7 +405,7 @@ export class MosaicCard extends LitElement {
     const title = this._config.title;
     const stripBorders = this._config.strip_borders !== false;
 
-    return html`
+    const content = html`
       ${title ? html`<div class="mosaic-title">${title}</div>` : ""}
       <div
         class="mosaic-grid ${stripBorders ? "strip-borders" : ""}"
@@ -411,6 +422,27 @@ export class MosaicCard extends LitElement {
         })}
       </div>
     `;
+
+    // Opt-in: without this the card renders bare, which is the long-standing
+    // behaviour and what mosaics nested inside other cards want. Turning it on
+    // gives the grid a real ha-card — the same element every other HA card
+    // renders — so it gets a background and border without being wrapped in a
+    // stack card just to borrow one. It also makes card-mod's `ha-card { … }`
+    // selector apply to this card directly.
+    if (!this._config.background) return content;
+
+    return html`
+      <ha-card style=${this._backgroundStyle()}>${content}</ha-card>
+    `;
+  }
+
+  /** Extra CSS declarations for the ha-card wrapper (background mode only). */
+  private _backgroundStyle(): string {
+    const parts: string[] = [];
+    const padding = this._config?.background_padding;
+    if (typeof padding === "number") parts.push(`padding: ${padding}px`);
+    if (this._config?.background_css) parts.push(this._config.background_css);
+    return parts.join("; ");
   }
 
   // ── HA card API ─────────────────────────────────────────────────────────────
