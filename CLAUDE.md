@@ -248,10 +248,15 @@ Then hard-refresh the browser. That's the whole loop.
   **`Cache-Control: no-store`** (else the browser serves a stale build).
 - Verify reachability from HA itself, not just locally:
   `ssh homeassistant "wget -S -qO- http://192.168.0.10:5173/mosaic-card.js"`
-- **Both resources define `mosaic-card`.** 5173 loads first and wins; the HACS
-  module then throws "already defined" in the console and stops evaluating.
-  Expected and harmless — but it means a console error is *not* evidence of a bug.
-  When the dev server is down the HACS resource takes over normally.
+- **Both resources define `mosaic-card`, and it is a RACE — not a guaranteed
+  shadow.** Whichever module executes first wins; the loser throws "already
+  defined" and stops evaluating. `/hacsfiles/` is served locally by HA and
+  gzipped, so it often beats the cross-network 5173 fetch — the winner can
+  differ per device and per page load. Symptom: stale build appears "everywhere
+  again", especially on phones/other machines, while the dev machine looks fine.
+  **Fix: keep the HACS-path file in sync** (scp + gzip, see fallback below)
+  whenever testing from more than one device, so whichever wins is current.
+  A console "already defined" error is expected and is *not* evidence of a bug.
 - Stray resource `/local/mosaic-carddd.js` — dead, harmless.
 
 **Fallback (dev server not running):** copy straight into HACS's folder.
