@@ -27,6 +27,23 @@ Current `mode: auto | manual` with `auto_flow: dense | row | column` is confusin
 
 The editor UI and `MosaicCardConfig` would need to be updated accordingly.
 
+### `grid_options.rows` means two different things
+For a top-level mosaic it is HA's Layout-tab card height. For a mosaic nested
+inside another mosaic it is the *span in the parent's grid*, set by our own grid
+picker. `effectiveRowCount()` currently treats both as "number of rows in my own
+grid", which is right for the first and only coincidentally right for the second
+(it happens to work when parent and child use the same subdivision). Nested
+mosaics on the Home view show a one-row (22px) empty tail from this. Needs a
+decision on whether a nested mosaic's inner row count should be independent of
+its parent span.
+
+### Auto mode still uses a fixed 8-row canvas under auto height
+`maxUsedRow` only works in manual mode — auto-mode placement is decided by the
+browser, so an auto-mode mosaic with auto height still declares 8 rows and can
+show an empty tail. Fixing it probably means dropping `grid-template-rows`
+entirely in that combination and letting `grid-auto-rows` create exactly the
+rows needed.
+
 ---
 
 ## Done

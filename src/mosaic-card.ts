@@ -52,7 +52,7 @@ interface SubCardConfig {
   [key: string]: unknown;
 }
 
-interface MosaicCardConfig {
+export interface MosaicCardConfig {
   type: string;
   /**
    * Layout mode.
@@ -148,6 +148,53 @@ declare global {
   interface Window {
     customCards?: CustomCardEntry[];
   }
+}
+
+// ── Shared grid geometry ──────────────────────────────────────────────────────
+
+/**
+ * Last grid row occupied by any card, from its explicit placement. Only
+ * meaningful in manual mode — in auto mode the browser decides placement, so
+ * this returns 0 and `grid-auto-rows` covers any spill instead.
+ */
+function maxUsedRow(config: MosaicCardConfig): number {
+  if ((config.mode ?? "auto") !== "manual") return 0;
+  let max = 0;
+  for (const card of config.cards ?? []) {
+    const g = card.grid_options;
+    if (!g) continue;
+    const end = (g.row_start ?? 1) + (g.rows ?? 1) - 1;
+    if (end > max) max = end;
+  }
+  return max;
+}
+
+/**
+ * How many rows the grid actually renders.
+ *
+ * The editor's drag overlay MUST use this too: it divides the overlay into this
+ * many bands, so if it disagrees with the card every handle lands in the wrong
+ * place. That is why this lives here as a shared function rather than being
+ * reimplemented on both sides.
+ *
+ * `grid_options.rows` is "auto" whenever HA sizes the card to its content, in
+ * which case the declared count is only a starting point — cards placed past it
+ * would otherwise land in content-sized implicit rows.
+ */
+export function effectiveRowCount(config: MosaicCardConfig): number {
+  const used = maxUsedRow(config);
+
+  // HA pinned a row count (Layout tab), or the user set one explicitly: honour
+  // it as the canvas height, but never clip cards placed past it.
+  const gridRows = config.grid_options?.rows;
+  if (typeof gridRows === "number") return Math.max(gridRows, used);
+  if (typeof config.rows === "number") return Math.max(config.rows, used);
+
+  // Auto height with no declared count: fit the content exactly. Falling back to
+  // a fixed 8 here is what left short cards padded with empty rows.
+  // (Auto *mode* placement is decided by the browser, so `used` is 0 there and
+  // the 8-row canvas still applies — see TODO.)
+  return used > 0 ? used : 8;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -311,9 +358,11 @@ export class MosaicCard extends LitElement {
   private _containerStyle(): string {
     const cfg = this._config!;
     const mode = cfg.mode ?? "auto";
-    // grid_options.rows can be "auto" (HA Layout tab) — only numeric values are usable.
-    const gridRows = cfg.grid_options?.rows;
-    const rows = typeof gridRows === "number" ? gridRows : cfg.rows ?? 8;
+    // A card can be placed past the declared row count. CSS Grid then invents
+    // *implicit* rows for it, and those are sized by content rather than by our
+    // fixed row height — which is what makes an auto-height mosaic balloon.
+    // effectiveRowCount extends the track list to cover what the cards use.
+    const rows = effectiveRowCount(cfg);
     const colGap = cfg.column_gap ?? 8;
     const rowGap = cfg.row_gap ?? 8;
 
@@ -339,6 +388,10 @@ export class MosaicCard extends LitElement {
       `grid-template-columns: repeat(${columns}, 1fr)`,
       `gap: ${rowGap}px ${colGap}px`,
       `grid-template-rows: repeat(${rows}, ${rowSize.toFixed(3)}px)`,
+      // Belt and braces: auto-flow in "auto" mode can still spill past the
+      // explicit tracks. Pin any implicit row to the same height so it can
+      // never be content-sized.
+      `grid-auto-rows: ${rowSize.toFixed(3)}px`,
     ];
 
     if (mode === "auto") {
