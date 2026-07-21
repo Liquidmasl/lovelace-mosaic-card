@@ -119,6 +119,16 @@ function deepSet(
   };
 }
 
+const MDI = {
+  up: "M7.41,15.41L12,10.83L16.59,15.41L18,14L12,8L6,14L7.41,15.41Z",
+  down: "M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z",
+  duplicate:
+    "M19,21H8V7H19M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5M16,1H4A2,2 0 0,0 2,3V17H4V3H16V1Z",
+  delete:
+    "M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z",
+  code: "M14.6 16.6L19.2 12L14.6 7.4L16 6L22 12L16 18L14.6 16.6M9.4 16.6L4.8 12L9.4 7.4L8 6L2 12L8 18L9.4 16.6Z",
+} as const;
+
 declare global {
   interface Window {
     loadCardHelpers?(): Promise<{
@@ -524,6 +534,7 @@ export class MosaicCardEditor extends LitElement {
 
     return html`
       ${this._renderModeAndGridSection(mode)}
+      <div class="group">
       ${this._renderVisibilityToggle(cards)}
       <div class="preview-area">
         <div class="card-sidebar">
@@ -559,8 +570,9 @@ export class MosaicCardEditor extends LitElement {
           ` : nothing}
         </div>
       </div>
-      ${this._renderCardsEditor()}
-      ${this._renderSelectedCardSettings()}
+        ${this._renderSelectedCardSettings()}
+      </div>
+      <div class="group">${this._renderCardsEditor()}</div>
     `;
   }
 
@@ -586,6 +598,31 @@ export class MosaicCardEditor extends LitElement {
             : "All cards shown regardless of their conditions."}
         </span>
       </div>
+    `;
+  }
+
+  /**
+   * Plain button rather than ha-icon-button: that element lays its inner button
+   * out at a fixed 48px regardless of --mdc-icon-button-size, which overflows
+   * the sidebar column and gets clipped. Sizing our own is simpler than
+   * fighting it.
+   */
+  private _renderCardAction(
+    label: string,
+    path: string,
+    disabled: boolean,
+    onClick: () => void,
+  ): TemplateResult {
+    return html`
+      <button
+        class="card-action"
+        title=${label}
+        aria-label=${label}
+        ?disabled=${disabled}
+        @click=${onClick}
+      >
+        <ha-svg-icon .path=${path}></ha-svg-icon>
+      </button>
     `;
   }
 
@@ -616,28 +653,18 @@ export class MosaicCardEditor extends LitElement {
         ${selected
           ? html`
               <div class="sidebar-item-actions" @click=${(e: Event) => e.stopPropagation()}>
-                <ha-icon-button
-                  label="Move up"
-                  .disabled=${index === 0}
-                  .path=${"M7.41,15.41L12,10.83L16.59,15.41L18,14L12,8L6,14L7.41,15.41Z"}
-                  @click=${() => this._moveCard(index, index - 1)}
-                ></ha-icon-button>
-                <ha-icon-button
-                  label="Move down"
-                  .disabled=${index === count - 1}
-                  .path=${"M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"}
-                  @click=${() => this._moveCard(index, index + 1)}
-                ></ha-icon-button>
-                <ha-icon-button
-                  label="Duplicate"
-                  .path=${"M19,21H8V7H19M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5M16,1H4A2,2 0 0,0 2,3V17H4V3H16V1Z"}
-                  @click=${() => this._duplicateCard(index)}
-                ></ha-icon-button>
-                <ha-icon-button
-                  label="Delete"
-                  .path=${"M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z"}
-                  @click=${() => this._deleteCard(index)}
-                ></ha-icon-button>
+                ${this._renderCardAction("Move up", MDI.up, index === 0, () =>
+                  this._moveCard(index, index - 1),
+                )}
+                ${this._renderCardAction("Move down", MDI.down, index === count - 1, () =>
+                  this._moveCard(index, index + 1),
+                )}
+                ${this._renderCardAction("Duplicate", MDI.duplicate, false, () =>
+                  this._duplicateCard(index),
+                )}
+                ${this._renderCardAction("Delete", MDI.delete, false, () =>
+                  this._deleteCard(index),
+                )}
               </div>
             `
           : nothing}
@@ -834,36 +861,31 @@ export class MosaicCardEditor extends LitElement {
     const g = (selectedCard.grid_options ?? {}) as CardGridOptions;
 
     return html`
-      <div class="section">
-        <div class="section-title">Selected card</div>
-        <div class="field inline-field">
-          <label>Remove border</label>
-          <ha-selector
-            .hass=${this.hass}
-            .selector=${{ boolean: {} }}
-            .value=${g.no_border ?? false}
-            @value-changed=${(e: CustomEvent) => this._setCardGridOption(selected, "no_border", (e.detail as { value: boolean }).value)}
-          ></ha-selector>
-        </div>
-        <div class="field inline-field">
-          <label>Remove background</label>
-          <ha-selector
-            .hass=${this.hass}
-            .selector=${{ boolean: {} }}
-            .value=${g.no_background ?? false}
-            @value-changed=${(e: CustomEvent) => this._setCardGridOption(selected, "no_background", (e.detail as { value: boolean }).value)}
-          ></ha-selector>
-        </div>
-        <div class="field">
-          <label>Custom CSS</label>
-          <ha-selector
-            .hass=${this.hass}
-            .selector=${{ text: { type: "text" } }}
-            .value=${g.custom_css ?? ""}
-            @value-changed=${(e: CustomEvent) => this._setCardGridOption(selected, "custom_css", (e.detail as { value: string }).value)}
-          ></ha-selector>
-          <div class="helper-text">CSS declarations on the card wrapper (e.g. <code>opacity: 0.7</code>)</div>
-        </div>
+      <div class="card-quick-settings">
+        <ha-formfield label="Remove border">
+          <ha-switch
+            .checked=${g.no_border ?? false}
+            @change=${(e: Event) =>
+              this._setCardGridOption(selected, "no_border", (e.target as HTMLInputElement).checked)}
+          ></ha-switch>
+        </ha-formfield>
+        <ha-formfield label="Remove background">
+          <ha-switch
+            .checked=${g.no_background ?? false}
+            @change=${(e: Event) =>
+              this._setCardGridOption(selected, "no_background", (e.target as HTMLInputElement).checked)}
+          ></ha-switch>
+        </ha-formfield>
+      </div>
+      <div class="field">
+        <label>Custom CSS</label>
+        <ha-selector
+          .hass=${this.hass}
+          .selector=${{ text: { type: "text" } }}
+          .value=${g.custom_css ?? ""}
+          @value-changed=${(e: CustomEvent) => this._setCardGridOption(selected, "custom_css", (e.detail as { value: string }).value)}
+        ></ha-selector>
+        <div class="helper-text">CSS declarations on the card wrapper (e.g. <code>opacity: 0.7</code>)</div>
       </div>
     `;
   }
@@ -1091,6 +1113,38 @@ export class MosaicCardEditor extends LitElement {
         margin-top: 2px;
       }
 
+      /*
+       * Visual grouping: each group is one thing you work on — the grid and its
+       * per-card visual tweaks, or the selected card's settings. The tint is
+       * derived from the text colour so it adapts to light and dark themes
+       * instead of assuming a background.
+       */
+      .group {
+        background: color-mix(in srgb, var(--primary-text-color) 4%, transparent);
+        border: 1px solid var(--divider-color, rgba(127, 127, 127, 0.2));
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 16px;
+      }
+
+      .group > .section:last-child,
+      .group > .field:last-child {
+        margin-bottom: 0;
+      }
+
+      ha-expansion-panel {
+        display: block;
+        margin-bottom: 16px;
+      }
+
+      .card-quick-settings {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 4px 20px;
+        margin: 12px 0 16px;
+      }
+
       /* ── Preview area: sidebar + preview side by side ── */
 
       .preview-toolbar {
@@ -1146,18 +1200,34 @@ export class MosaicCardEditor extends LitElement {
 
       .sidebar-item-actions {
         display: flex;
-        justify-content: space-between;
-        padding: 0 2px 2px;
+        justify-content: space-around;
+        gap: 2px;
+        padding: 2px 4px 4px;
       }
 
-      /*
-       * ha-icon-button ignores --mdc-icon-button-size and lays out at 48px,
-       * which overflows the 120px sidebar. Size the host directly instead.
-       */
-      .sidebar-item-actions ha-icon-button {
-        width: 28px;
-        height: 28px;
+      .card-action {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: none;
+        border-radius: 4px;
+        background: none;
+        color: var(--secondary-text-color);
+        cursor: pointer;
         --mdc-icon-size: 16px;
+      }
+
+      .card-action:hover:not([disabled]) {
+        background: var(--divider-color, rgba(127, 127, 127, 0.25));
+        color: var(--primary-text-color);
+      }
+
+      .card-action[disabled] {
+        opacity: 0.35;
+        cursor: default;
       }
 
       .layout-section {
