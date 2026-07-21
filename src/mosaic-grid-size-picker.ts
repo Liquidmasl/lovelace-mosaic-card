@@ -38,9 +38,8 @@ interface DragState {
 /**
  * A visual grid size + position picker for mosaic card sub-cards.
  *
- * Auto mode:  drag south/east edge handles to resize (columns/rows span).
- * Manual mode: drag body to move (column_start/row_start) + all four edge
- *              handles to resize from any side.
+ * Drag the body to move (column_start/row_start), or any of the four edge
+ * handles to resize from that side.
  *
  * When gridColumns > 12, a toggle shows a second "12-col fallback" view that
  * edits `value.mobile` instead of the root value.
@@ -49,9 +48,6 @@ interface DragState {
  */
 @customElement("mosaic-grid-size-picker")
 export class MosaicGridSizePicker extends LitElement {
-  /** Parent mosaic card layout mode. */
-  @property({ type: String }) mode: "auto" | "manual" = "auto";
-
   /** Total columns in the parent mosaic card grid. */
   @property({ type: Number }) gridColumns = 12;
 
@@ -92,11 +88,11 @@ export class MosaicGridSizePicker extends LitElement {
   }
 
   private get _colStart(): number {
-    return this.mode === "manual" ? Math.max(1, this._viewValue.column_start ?? 1) : 1;
+    return Math.max(1, this._viewValue.column_start ?? 1);
   }
 
   private get _rowStart(): number {
-    return this.mode === "manual" ? Math.max(1, this._viewValue.row_start ?? 1) : 1;
+    return Math.max(1, this._viewValue.row_start ?? 1);
   }
 
   /** How many rows to show in the picker visualization. */
@@ -242,7 +238,6 @@ export class MosaicGridSizePicker extends LitElement {
     const rowSpan = this._rowSpan;
     const colStart = this._colStart;
     const rowStart = this._rowStart;
-    const isManual = this.mode === "manual";
     const needsToggle = this.gridColumns > 12;
 
     // Rectangle position as percentages within the picker area
@@ -270,10 +265,10 @@ export class MosaicGridSizePicker extends LitElement {
       return html`
         <div class="grid-viz overlay" style="${vizStyle}">
           <div
-            class="card-rect${isManual ? " draggable" : ""}${this._dragging ? " dragging" : ""}"
+            class="card-rect draggable${this._dragging ? " dragging" : ""}"
             style="left:${left}%;top:${top}%;width:${width}%;height:${height}%"
-            @mousedown=${isManual ? (e: MouseEvent) => this._startDrag(e, "move") : undefined}
-            @touchstart=${isManual ? (e: TouchEvent) => this._startDrag(e, "move") : undefined}
+            @mousedown=${(e: MouseEvent) => this._startDrag(e, "move")}
+            @touchstart=${(e: TouchEvent) => this._startDrag(e, "move")}
           >
             <div class="handle s"
               @mousedown=${(e: MouseEvent) => { e.stopPropagation(); this._startDrag(e, "s"); }}
@@ -283,16 +278,14 @@ export class MosaicGridSizePicker extends LitElement {
               @mousedown=${(e: MouseEvent) => { e.stopPropagation(); this._startDrag(e, "e"); }}
               @touchstart=${(e: TouchEvent) => { e.stopPropagation(); this._startDrag(e, "e"); }}
             ></div>
-            ${isManual ? html`
-              <div class="handle n"
-                @mousedown=${(e: MouseEvent) => { e.stopPropagation(); this._startDrag(e, "n"); }}
-                @touchstart=${(e: TouchEvent) => { e.stopPropagation(); this._startDrag(e, "n"); }}
-              ></div>
-              <div class="handle w"
-                @mousedown=${(e: MouseEvent) => { e.stopPropagation(); this._startDrag(e, "w"); }}
-                @touchstart=${(e: TouchEvent) => { e.stopPropagation(); this._startDrag(e, "w"); }}
-              ></div>
-            ` : ""}
+            <div class="handle n"
+              @mousedown=${(e: MouseEvent) => { e.stopPropagation(); this._startDrag(e, "n"); }}
+              @touchstart=${(e: TouchEvent) => { e.stopPropagation(); this._startDrag(e, "n"); }}
+            ></div>
+            <div class="handle w"
+              @mousedown=${(e: MouseEvent) => { e.stopPropagation(); this._startDrag(e, "w"); }}
+              @touchstart=${(e: TouchEvent) => { e.stopPropagation(); this._startDrag(e, "w"); }}
+            ></div>
           </div>
         </div>
       `;
@@ -324,14 +317,10 @@ export class MosaicGridSizePicker extends LitElement {
 
       <div class="grid-viz" style="${vizStyle}">
         <div
-          class="card-rect${isManual ? " draggable" : ""}${this._dragging ? " dragging" : ""}"
+          class="card-rect draggable${this._dragging ? " dragging" : ""}"
           style="left:${left}%;top:${top}%;width:${width}%;height:${height}%"
-          @mousedown=${isManual
-            ? (e: MouseEvent) => this._startDrag(e, "move")
-            : undefined}
-          @touchstart=${isManual
-            ? (e: TouchEvent) => this._startDrag(e, "move")
-            : undefined}
+          @mousedown=${(e: MouseEvent) => this._startDrag(e, "move")}
+          @touchstart=${(e: TouchEvent) => this._startDrag(e, "move")}
         >
           <!-- South handle: always present (resize rows) -->
           <div
@@ -359,9 +348,8 @@ export class MosaicGridSizePicker extends LitElement {
             }}
           ></div>
 
-          ${isManual
-            ? html`
-                <!-- North handle: manual only (move row start) -->
+          
+                <!-- North handle: move row start -->
                 <div
                   class="handle n"
                   @mousedown=${(e: MouseEvent) => {
@@ -374,7 +362,7 @@ export class MosaicGridSizePicker extends LitElement {
                   }}
                 ></div>
 
-                <!-- West handle: manual only (move column start) -->
+                <!-- West handle: move column start -->
                 <div
                   class="handle w"
                   @mousedown=${(e: MouseEvent) => {
@@ -386,14 +374,11 @@ export class MosaicGridSizePicker extends LitElement {
                     this._startDrag(e, "w");
                   }}
                 ></div>
-              `
-            : ""}
         </div>
       </div>
 
       <div class="inputs">
-        ${isManual
-          ? html`
+        
               <label class="input-field">
                 <span>Col start</span>
                 <input
@@ -403,8 +388,6 @@ export class MosaicGridSizePicker extends LitElement {
                   @change=${(e: Event) => this._onInputChange(e, "column_start")}
                 />
               </label>
-            `
-          : ""}
 
         <label class="input-field">
           <span>Width (cols)</span>
@@ -416,8 +399,7 @@ export class MosaicGridSizePicker extends LitElement {
           />
         </label>
 
-        ${isManual
-          ? html`
+        
               <label class="input-field">
                 <span>Row start</span>
                 <input
@@ -427,8 +409,6 @@ export class MosaicGridSizePicker extends LitElement {
                   @change=${(e: Event) => this._onInputChange(e, "row_start")}
                 />
               </label>
-            `
-          : ""}
 
         <label class="input-field">
           <span>Height (rows)</span>
@@ -441,7 +421,7 @@ export class MosaicGridSizePicker extends LitElement {
         </label>
       </div>
 
-      ${isManual && !this._show12ColView
+      ${!this._show12ColView
         ? html`
             <label class="input-field z-index-field">
               <span>Z-index</span>

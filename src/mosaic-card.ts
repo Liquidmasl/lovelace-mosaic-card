@@ -14,13 +14,13 @@ interface CardGridOptions {
   columns?: number;
   /** Row span (how many grid rows this card occupies) */
   rows?: number;
-  /** Manual mode only: explicit column start position (1-based) */
+  /** Explicit column start (1-based). Omit to let the browser place the card. */
   column_start?: number;
-  /** Manual mode only: explicit row start position (1-based) */
+  /** Explicit row start (1-based). Omit to let the browser place the card. */
   row_start?: number;
-  /** Manual mode only: z-index for overlay stacking */
+  /** z-index, for deliberately overlapping cards. */
   z_index?: number;
-  /** Manual mode only: per-card CSS style overrides */
+  /** Per-card CSS style overrides. */
   styles?: CardStyles;
   /** Remove the sub-card's border (box-shadow + border-radius + border). */
   no_border?: boolean;
@@ -55,12 +55,6 @@ interface SubCardConfig {
 export interface MosaicCardConfig {
   type: string;
   /**
-   * Layout mode.
-   * - "auto"   (default) — grid-auto-flow: dense, cards sized only
-   * - "manual" — every card has explicit column_start + row_start
-   */
-  mode?: "auto" | "manual";
-  /**
    * Number of equal-width columns in the grid.
    * Defaults to the mosaic card's own HA grid size (getGridOptions().columns = 12).
    */
@@ -70,11 +64,6 @@ export interface MosaicCardConfig {
   column_gap?: number;
   /** Gap between rows in px. Default 8. */
   row_gap?: number;
-  /**
-   * Auto-flow mode. Only applies when mode = "auto".
-   * Controls CSS grid-auto-flow. Default "dense".
-   */
-  auto_flow?: "dense" | "row" | "column";
   /**
    * Row subdivision factor. Splits the standard 56px HA row into finer units:
    * 1 → 56px rows, 2 → 28px rows, 4 → 14px rows. Default 1.
@@ -153,17 +142,16 @@ declare global {
 // ── Shared grid geometry ──────────────────────────────────────────────────────
 
 /**
- * Last grid row occupied by any card, from its explicit placement. Only
- * meaningful in manual mode — in auto mode the browser decides placement, so
- * this returns 0 and `grid-auto-rows` covers any spill instead.
+ * Last grid row occupied by any card. Cards without an explicit `row_start` are
+ * auto-placed by the browser and cannot be accounted for here, so they are
+ * skipped; `grid-auto-rows` covers whatever they spill into.
  */
-function maxUsedRow(config: MosaicCardConfig): number {
-  if ((config.mode ?? "auto") !== "manual") return 0;
+export function maxUsedRow(config: MosaicCardConfig): number {
   let max = 0;
   for (const card of config.cards ?? []) {
     const g = card.grid_options;
-    if (!g) continue;
-    const end = (g.row_start ?? 1) + (g.rows ?? 1) - 1;
+    if (!g || g.row_start === undefined) continue;
+    const end = g.row_start + (g.rows ?? 1) - 1;
     if (end > max) max = end;
   }
   return max;
@@ -192,8 +180,8 @@ export function effectiveRowCount(config: MosaicCardConfig): number {
   if (typeof config.rows === "number") return Math.max(config.rows, used);
 
   // Nothing declared: fit the content exactly. A fixed fallback here is what
-  // left short cards padded with empty rows. (Auto *mode* placement is decided
-  // by the browser, so `used` is 0 there and the fallback still applies.)
+  // left short cards padded with empty rows. It still applies when no card has
+  // an explicit row_start, since then there is nothing to measure.
   return used > 0 ? used : 8;
 }
 
@@ -357,7 +345,6 @@ export class MosaicCard extends LitElement {
   /** Build the inline style string for the .mosaic-grid container. */
   private _containerStyle(): string {
     const cfg = this._config!;
-    const mode = cfg.mode ?? "auto";
     // A card can be placed past the declared row count. CSS Grid then invents
     // *implicit* rows for it, and those are sized by content rather than by our
     // fixed row height — which is what makes an auto-height mosaic balloon.
@@ -388,16 +375,11 @@ export class MosaicCard extends LitElement {
       `grid-template-columns: repeat(${columns}, 1fr)`,
       `gap: ${rowGap}px ${colGap}px`,
       `grid-template-rows: repeat(${rows}, ${rowSize.toFixed(3)}px)`,
-      // Belt and braces: auto-flow in "auto" mode can still spill past the
+      // Cards without explicit placement are auto-placed and can spill past the
       // explicit tracks. Pin any implicit row to the same height so it can
       // never be content-sized.
       `grid-auto-rows: ${rowSize.toFixed(3)}px`,
     ];
-
-    if (mode === "auto") {
-      const autoFlow = cfg.auto_flow ?? "dense";
-      parts.push(`grid-auto-flow: ${autoFlow}`);
-    }
 
     return parts.join("; ");
   }
@@ -405,26 +387,31 @@ export class MosaicCard extends LitElement {
   /** Build the inline style string for a single card wrapper. */
   private _cardStyle(
     opts: ReturnType<typeof this._resolveGridOptions>,
-    mode: "auto" | "manual",
   ): string {
     const colSpan = opts.columns ?? 2;
     const rowSpan = opts.rows ?? 1;
     const parts: string[] = [];
 
-    if (mode === "auto") {
-      parts.push(`grid-column: span ${colSpan}`);
-      parts.push(`grid-row: span ${rowSpan}`);
-    } else {
-      const colStart = opts.column_start ?? 1;
-      const rowStart = opts.row_start ?? 1;
-      parts.push(`grid-column: ${colStart} / span ${colSpan}`);
-      parts.push(`grid-row: ${rowStart} / span ${rowSpan}`);
-      if (opts.z_index !== undefined) {
-        parts.push(`z-index: ${opts.z_index}`);
-      }
+    // Placement is per-card, not a card-wide mode: a card with an explicit
+    // start is pinned there, one without is auto-placed into the next free
+    // slot. That keeps freshly added cards from all stacking on cell 1,1.
+    const colStart = opts.column_start;
+    const rowStart = opts.row_start;
+    parts.push(
+      colStart !== undefined
+        ? `grid-column: ${colStart} / span ${colSpan}`
+        : `grid-column: span ${colSpan}`,
+    );
+    parts.push(
+      rowStart !== undefined
+        ? `grid-row: ${rowStart} / span ${rowSpan}`
+        : `grid-row: span ${rowSpan}`,
+    );
+    if (opts.z_index !== undefined) {
+      parts.push(`z-index: ${opts.z_index}`);
     }
 
-    // Per-card style overrides (manual mode feature, but applied regardless)
+    // Per-card style overrides
     const s = opts.styles;
     if (s) {
       if (s.pointer_events !== undefined)
@@ -454,7 +441,6 @@ export class MosaicCard extends LitElement {
       return html``;
     }
 
-    const mode = this._config.mode ?? "auto";
     const title = this._config.title;
     const stripBorders = this._config.strip_borders !== false;
 
@@ -468,7 +454,7 @@ export class MosaicCard extends LitElement {
           const cardConfig = this._config!.cards![i];
           const opts = this._resolveGridOptions(cardConfig, el);
           return html`
-            <div class="card-wrapper" style=${this._cardStyle(opts, mode)}>
+            <div class="card-wrapper" style=${this._cardStyle(opts)}>
               ${el}
             </div>
           `;
@@ -540,7 +526,6 @@ export class MosaicCard extends LitElement {
   static getStubConfig(): MosaicCardConfig {
     return {
       type: "custom:mosaic-card",
-      mode: "auto",
       column_gap: 8,
       row_gap: 8,
       strip_borders: true,
