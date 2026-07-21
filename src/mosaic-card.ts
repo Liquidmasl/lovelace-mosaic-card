@@ -184,16 +184,16 @@ function maxUsedRow(config: MosaicCardConfig): number {
 export function effectiveRowCount(config: MosaicCardConfig): number {
   const used = maxUsedRow(config);
 
-  // HA pinned a row count (Layout tab), or the user set one explicitly: honour
-  // it as the canvas height, but never clip cards placed past it.
-  const gridRows = config.grid_options?.rows;
-  if (typeof gridRows === "number") return Math.max(gridRows, used);
+  // NOTE: grid_options.rows is deliberately NOT consulted. It belongs to HA and
+  // is measured in HA rows (56px); ours are subdivided (56/row_subdivision).
+  // Writing our count there made HA reserve 19*56px for a grid we drew at
+  // 19*22px — ~790px of dead space per card. grid_options.rows now only affects
+  // what HA reserves; the internal grid is ours alone.
   if (typeof config.rows === "number") return Math.max(config.rows, used);
 
-  // Auto height with no declared count: fit the content exactly. Falling back to
-  // a fixed 8 here is what left short cards padded with empty rows.
-  // (Auto *mode* placement is decided by the browser, so `used` is 0 there and
-  // the 8-row canvas still applies — see TODO.)
+  // Nothing declared: fit the content exactly. A fixed fallback here is what
+  // left short cards padded with empty rows. (Auto *mode* placement is decided
+  // by the browser, so `used` is 0 there and the fallback still applies.)
   return used > 0 ? used : 8;
 }
 

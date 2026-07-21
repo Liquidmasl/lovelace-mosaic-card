@@ -498,11 +498,15 @@ export class MosaicCardEditor extends LitElement {
       return { ...card, grid_options: { ...g, row_start: clampedStart, rows: clampedSpan } };
     });
 
-    this._fireConfigChanged({
-      ...this._config!,
-      cards,
-      grid_options: { ...this._config?.grid_options, rows: newRows },
-    });
+    // Store the count as our own `rows`, in our own subdivided units, and drop
+    // any row pin from grid_options. That key is HA's and is read in HA rows
+    // (56px), so putting our subdivided count there made HA reserve several
+    // times the height the grid actually draws. With it absent, our
+    // getGridOptions() reports rows:"auto" and HA sizes the card to content.
+    const grid_options = { ...this._config?.grid_options };
+    delete grid_options.rows;
+
+    this._fireConfigChanged({ ...this._config!, cards, rows: newRows, grid_options });
   }
 
 
