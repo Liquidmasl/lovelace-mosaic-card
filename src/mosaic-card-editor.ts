@@ -1247,7 +1247,7 @@ export class MosaicCardEditor extends LitElement {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
         gap: 4px 16px;
-        align-items: end;
+        align-items: start;
       }
 
       .field-grid > .field {
