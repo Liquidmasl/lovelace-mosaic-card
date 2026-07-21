@@ -27,6 +27,15 @@ Current `mode: auto | manual` with `auto_flow: dense | row | column` is confusin
 
 The editor UI and `MosaicCardConfig` would need to be updated accordingly.
 
+### Should `background` be the default?
+`ha-card` is what every other HA card renders, so arguably the mosaic should too,
+with an opt-*out* for the nested case rather than today's opt-in. Blocked on the
+migration question: flipping the default puts a card background under every
+existing mosaic on every dashboard, including ones deliberately nested inside
+another card. Would need either a version bump with release notes, or a heuristic
+(e.g. default on only when the card is a direct child of a view/section) — and a
+heuristic that guesses wrong is worse than an explicit flag.
+
 ---
 
 ## Done
